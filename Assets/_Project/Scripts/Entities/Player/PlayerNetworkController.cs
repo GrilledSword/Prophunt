@@ -38,6 +38,8 @@ public class PlayerNetworkController : NetworkBehaviour
     private float dashEndTime;
     private float lastDashTime;
 
+    private bool isUIConnected = false;
+
     public override void OnNetworkSpawn()
     {
         characterController = GetComponent<CharacterController>();
@@ -45,8 +47,9 @@ public class PlayerNetworkController : NetworkBehaviour
 
         if (IsServer)
         {
-            // Beállítjuk a HealthComponent-nek is, hogy ki õ, hogy tudja kezelni a sérülést
             healthComponent.isHunter = isHunter.Value;
+            if (NetworkGameManager.Instance != null)
+                NetworkGameManager.Instance.RegisterPlayer(OwnerClientId, this);
         }
 
         if (IsOwner)
@@ -54,23 +57,50 @@ public class PlayerNetworkController : NetworkBehaviour
             sceneCamera = Camera.main;
             Cursor.lockState = CursorLockMode.Locked;
             Cursor.visible = false;
+
+            TryConnectToHUD();
         }
 
         isHunter.OnValueChanged += OnRoleChanged;
         UpdateVisuals(isHunter.Value);
     }
+    private void TryConnectToHUD()
+    {
+        if (isUIConnected) return;
 
+        if (GameHUD.Instance != null)
+        {
+            Debug.Log("[Player] HUD megtalálva! Csatlakozás...");
+            GameHUD.Instance.SetRoleUI(isHunter.Value);
+
+            if (healthComponent != null)
+            {
+                GameHUD.Instance.UpdateHealth(healthComponent.currentHealth.Value);
+                healthComponent.currentHealth.OnValueChanged += OnHealthChanged;
+            }
+            isUIConnected = true;
+        }
+    }
+    private void OnHealthChanged(float previous, float current)
+    {
+        if (GameHUD.Instance != null)
+        {
+            GameHUD.Instance.UpdateHealth(current);
+        }
+    }
+    public override void OnNetworkDespawn()
+    {
+        if (IsOwner && healthComponent != null)
+        {
+            healthComponent.currentHealth.OnValueChanged -= OnHealthChanged;
+        }
+        base.OnNetworkDespawn();
+    }
     private void OnRoleChanged(bool previous, bool current)
     {
         UpdateVisuals(current);
-
-        // [ÚJ] Ha játék közben változik a szerep (ritka, de lehetséges), frissítsük a UI-t
-        if (IsOwner && GameHUD.Instance != null)
-        {
-            GameHUD.Instance.SetRoleUI(current);
-        }
+        if (IsOwner && GameHUD.Instance != null) GameHUD.Instance.SetRoleUI(current);
     }
-
     private void UpdateVisuals(bool hunterParams)
     {
         if (IsOwner)
@@ -84,46 +114,32 @@ public class PlayerNetworkController : NetworkBehaviour
             if (deerModel) deerModel.SetActive(!hunterParams);
         }
     }
-
     private void Update()
     {
         if (!IsOwner) return;
+        if (!isUIConnected)
+        {
+            TryConnectToHUD();
+        }
         HandleInput();
         Move();
         Look();
     }
-
     private void LateUpdate()
     {
         if (!IsOwner) return;
-
-        // [JAVÍTÁS] Ha a kamera elveszett (pl. scene váltásnál törlõdött a menü kamera),
-        // akkor megpróbáljuk megkeresni az újat a GameScene-ben.
-        if (sceneCamera == null)
-        {
-            sceneCamera = Camera.main;
-        }
-
-        // Csak akkor frissítünk, ha VAN érvényes kamera
-        if (sceneCamera != null)
-        {
-            UpdateCameraPosition();
-        }
+        if (sceneCamera == null) sceneCamera = Camera.main;
+        if (sceneCamera != null) UpdateCameraPosition();
     }
-
     private void UpdateCameraPosition()
     {
-        // Itt már tudjuk, hogy a sceneCamera nem null (mert a LateUpdate ellenõrizte)
-
         Transform targetMount = isHunter.Value ? fpsMount : tpsMount;
-
         if (targetMount != null)
         {
             sceneCamera.transform.position = targetMount.position;
             sceneCamera.transform.rotation = targetMount.rotation;
         }
     }
-
     private void HandleInput()
     {
         if (Keyboard.current != null)
@@ -151,11 +167,8 @@ public class PlayerNetworkController : NetworkBehaviour
             isDashing = true;
             dashEndTime = Time.time + dashDuration;
             lastDashTime = Time.time;
-
-            // Itt jöhetne egy Dash hang vagy particle effekt
         }
     }
-
     private void Move()
     {
         if (characterController == null) return;
@@ -208,11 +221,10 @@ public class PlayerNetworkController : NetworkBehaviour
         velocity.y += gravity * Time.deltaTime;
         characterController.Move(velocity * Time.deltaTime);
     }
-
     private void Look()
     {
-        float mouseX = lookInput.x * lookSpeed * Time.deltaTime;
-        float mouseY = lookInput.y * lookSpeed * Time.deltaTime;
+        float mouseX = lookInput.x * 2f * Time.deltaTime;
+        float mouseY = lookInput.y * 2f * Time.deltaTime;
 
         xRotation -= mouseY;
         xRotation = Mathf.Clamp(xRotation, -90f, 90f);
@@ -225,7 +237,6 @@ public class PlayerNetworkController : NetworkBehaviour
     [ServerRpc]
     private void ApplySprintCostServerRpc()
     {
-        // Csak a vadásztól vonunk le
         if (isHunter.Value)
         {
             healthComponent.ModifyHealth(-hunterSprintCost * Time.deltaTime);
