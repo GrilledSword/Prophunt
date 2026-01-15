@@ -11,6 +11,10 @@ public class HunterShootingSystem : NetworkBehaviour
     [SerializeField] private float range = 100f;
     [SerializeField] private LayerMask shootableLayers; // Mit lehet eltalálni?
 
+    [Header("Oh Deer Mechanika")]
+    [SerializeField] private float playerHitReward = 15f; // Mennyi Sanity-t kap vissza, ha játékost lõ?
+    [SerializeField] private float npcHitPenalty = 25f;   // Mennyi Sanity-t veszít, ha NPC-t lõ?
+
     [Header("Visuals")]
     [SerializeField] private ParticleSystem muzzleFlash; // Torkolattûz (Opcionális)
     [SerializeField] private Transform firePoint; // Honnan indul a golyó (FPS Mountnál)
@@ -78,15 +82,34 @@ public class HunterShootingSystem : NetworkBehaviour
     [ServerRpc]
     private void ShootServerRpc(ulong targetId)
     {
-        // A szerver ellenõrzi a találatot
+        // 1. Megkeressük, mit találtunk el
         if (NetworkManager.Singleton.SpawnManager.SpawnedObjects.TryGetValue(targetId, out NetworkObject targetObj))
         {
-            // Van rajta élet?
-            if (targetObj.TryGetComponent(out HealthComponent health))
-            {
-                health.TakeDamage(damage);
+            // 2. Megnézzük a SAJÁT életünket (hogy tudjunk büntetni/jutalmazni)
+            var myHealth = GetComponent<HealthComponent>();
 
-                // [Opcionális] Itt lehetne visszaküldeni ClientRpc-t a találatjelzéshez (Hitmarker)
+            // 3. ESET: JÁTÉKOST TALÁLTUNK (Szarvas Játékos)
+            if (targetObj.GetComponent<PlayerNetworkController>() != null)
+            {
+                // A célpont (Szarvas) meghal (TakeHit kezeli az instant halált)
+                if (targetObj.TryGetComponent(out HealthComponent targetHealth))
+                {
+                    targetHealth.TakeHit(9999); // Biztos halál
+                }
+
+                // Mi (Vadász) kapunk Sanity-t
+                myHealth.ModifyHealth(playerHitReward);
+                Debug.Log("Játékos találat! Sanity nõtt.");
+            }
+            // 4. ESET: NPC-T TALÁLTUNK
+            else if (targetObj.GetComponent<Npc>() != null)
+            {
+                // Az NPC "meghal" (eltûnik)
+                targetObj.Despawn(true);
+
+                // Mi (Vadász) sérülünk (Büntetés)
+                myHealth.ModifyHealth(-npcHitPenalty);
+                Debug.Log("NPC találat! Sanity csökkent (Büntetés).");
             }
         }
     }
