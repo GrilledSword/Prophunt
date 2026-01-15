@@ -1136,7 +1136,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::GameLoopManager
   ShowTopMostFoldoutHeaderGroup: 1
   lobbyTime: 10
-  minPlayersToStart: 1
+  minPlayersToStart: 2
   lobbySpawnPoint: {fileID: 1903477014}
   gameSpawnPoints:
   - {fileID: 2011907177}

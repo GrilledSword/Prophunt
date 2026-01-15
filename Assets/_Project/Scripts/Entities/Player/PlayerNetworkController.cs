@@ -95,12 +95,6 @@ public class PlayerNetworkController : NetworkBehaviour
         }
     }
 
-    [ServerRpc]
-    public void SetRoleServerRpc(bool _isHunter)
-    {
-        isHunter.Value = _isHunter;
-    }
-
     private void Update()
     {
         if (!IsOwner) return;
