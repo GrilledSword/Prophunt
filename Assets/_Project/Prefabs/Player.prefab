@@ -405,7 +405,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
-  GlobalObjectIdHash: 2088715515
+  GlobalObjectIdHash: 3782991189
   InScenePlacedSourceGlobalObjectIdHash: 3782991189
   DeferredDespawnTick: 0
   Ownership: 1
@@ -457,7 +457,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PlayerNetworkController
   ShowTopMostFoldoutHeaderGroup: 1
   moveSpeed: 5
-  lookSpeed: 2
+  lookSpeed: 5
   gravity: -9.81
   hunterModel: {fileID: 2356138891384661648}
   deerModel: {fileID: 2468986061800698067}

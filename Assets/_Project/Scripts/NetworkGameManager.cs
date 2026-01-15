@@ -60,4 +60,48 @@ public class NetworkGameManager : NetworkBehaviour
             player.Value.SetRoleServerRpc(isHunter);
         }
     }
+    public override void OnNetworkSpawn()
+    {
+        // [ÚJ] Amikor a GameManager létrejön (Pálya betöltéskor),
+        // körbenézünk, hogy vannak-e már játékosok, akik "kimaradtak" a regisztrációból.
+        if (IsServer)
+        {
+            foreach (var client in NetworkManager.Singleton.ConnectedClientsList)
+            {
+                if (client.PlayerObject != null)
+                {
+                    var playerScript = client.PlayerObject.GetComponent<PlayerNetworkController>();
+                    if (playerScript != null)
+                    {
+                        RegisterPlayer(client.ClientId, playerScript);
+                    }
+                }
+            }
+        }
+
+        // Iratkozzunk fel a késõbbi csatlakozókra is, biztos ami biztos
+        NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnected;
+    }
+
+    // Takarítás, ha megszûnik a GameManager
+    public override void OnNetworkDespawn()
+    {
+        if (NetworkManager.Singleton != null)
+        {
+            NetworkManager.Singleton.OnClientConnectedCallback -= OnClientConnected;
+        }
+    }
+
+    private void OnClientConnected(ulong clientId)
+    {
+        // Ez a normál csatlakozásokat kezeli majd játék közben
+        if (IsServer && NetworkManager.Singleton.ConnectedClients.TryGetValue(clientId, out var client))
+        {
+            if (client.PlayerObject != null)
+            {
+                var playerScript = client.PlayerObject.GetComponent<PlayerNetworkController>();
+                RegisterPlayer(clientId, playerScript);
+            }
+        }
+    }
 }
