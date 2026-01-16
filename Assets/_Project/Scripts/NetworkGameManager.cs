@@ -42,30 +42,47 @@ public class NetworkGameManager : NetworkBehaviour
         {
             bool isHunter = (player.Key == hunterId);
             player.Value.isHunter.Value = isHunter;
+
+            // [ÚJ] Kényszerítjük a HealthComponentet is a Szerveren
+            var health = player.Value.GetComponent<HealthComponent>();
+            if (health != null) health.isHunter = isHunter;
+
+            Debug.Log($"[Server] {player.Key} szerepe: {(isHunter ? "HUNTER" : "DEER")}");
         }
     }
-    public void OnPlayerDied(ulong victimId, bool wasHunter)
+    public void OnPlayerDied(ulong victimId, bool wasHunter, bool isInstaKill)
     {
         if (!IsServer) return;
 
         if (wasHunter)
         {
-            // HA A VADÁSZ HAL MEG (ELFOGYOTT A SANITY) -> PANIC MODE!
-            Debug.Log("VADÁSZ LEESETT! PÁNIK MÓD INDUL!");
-            TriggerHunterPanicMode(victimId);
+            if (isInstaKill)
+            {
+                // TAPOSÓAKNA: Nincs kegyelem, nincs Pánik Mód.
+                Debug.Log("VADÁSZ FELROBBANT! (InstaKill) -> Szarvasok nyertek.");
+                EndGameServerRpc(false); // False = Hunter Lost (Deer Won)
+
+                // Opcionális: Spectatorba tehetjük, hogy nézze a végét
+                if (connectedPlayers.TryGetValue(victimId, out var hunterScript))
+                {
+                    hunterScript.SetGhostModeClientRpc();
+                }
+            }
+            else
+            {
+                // SIMA HALÁL (Sanity 0): Pánik Mód!
+                Debug.Log("VADÁSZ LEESETT! PÁNIK MÓD INDUL!");
+                TriggerHunterPanicMode(victimId);
+            }
         }
         else
         {
-            // HA SZARVAS HAL MEG -> SPECTATOR
+            // SZARVAS HALÁL -> Spectator
             Debug.Log($"Szarvas ({victimId}) meghalt. Spectator mód.");
-
-            // Értesítjük a klienst, hogy legyen szellem
             if (connectedPlayers.TryGetValue(victimId, out var playerScript))
             {
                 playerScript.SetGhostModeClientRpc();
             }
-
-            // Ellenõrizzük, van-e még élõ szarvas
             CheckDeerWinCondition();
         }
     }
@@ -101,8 +118,12 @@ public class NetworkGameManager : NetworkBehaviour
                 if (selectedZone != null)
                 {
                     selectedZone.SetActive(true);
-                    Debug.Log($"Kijelölt menekülõ pont: {selectedZone.name}");
+                    Debug.Log($"[PANIC] Kijelölt SafeZone: {selectedZone.name} a pozíción: {selectedZone.transform.position}");
                     // Itt lehetne ClientRpc-vel jelezni a Hunternek, hol a ház (Waypoint)
+                }
+                else
+                {
+                    Debug.LogError("[PANIC] HIBA! Nincs elérhetõ SafeZone a listában!");
                 }
             }
         }

@@ -1,6 +1,7 @@
-using UnityEngine;
 using Unity.Netcode;
+using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.Rendering;
 
 [RequireComponent(typeof(CharacterController))]
 [RequireComponent(typeof(HealthComponent))]
@@ -48,16 +49,25 @@ public class PlayerNetworkController : NetworkBehaviour
     private float dashEndTime;
     private float lastDashTime;
 
+    private bool isGhost = false;
     private bool isUIConnected = false;
+
+    private bool isTrapped = false;
+    private int trapEscapePressesNeeded = 10; // Hányszor kell megnyomni a Space-t
+    private int currentTrapPresses = 0;
 
     public override void OnNetworkSpawn()
     {
         characterController = GetComponent<CharacterController>();
         healthComponent = GetComponent<HealthComponent>();
 
-        if (IsServer)
+        if (healthComponent != null)
         {
             healthComponent.isHunter = isHunter.Value;
+        }
+
+        if (IsServer)
+        {
             if (NetworkGameManager.Instance != null)
                 NetworkGameManager.Instance.RegisterPlayer(OwnerClientId, this);
         }
@@ -111,6 +121,12 @@ public class PlayerNetworkController : NetworkBehaviour
     }
     private void OnRoleChanged(bool previous, bool current)
     {
+        // [JAVÍTÁS] Ha változik a szerep, a HP komponensnek is szólni kell!
+        if (healthComponent != null)
+        {
+            healthComponent.isHunter = current;
+        }
+
         UpdateVisuals(current);
         if (IsOwner && GameHUD.Instance != null) GameHUD.Instance.SetRoleUI(current);
     }
@@ -130,22 +146,22 @@ public class PlayerNetworkController : NetworkBehaviour
     private void Update()
     {
         if (!IsOwner) return;
-
         if (!isUIConnected) TryConnectToHUD();
+
+        // 1. HA CSAPDÁBAN VAGYUNK
+        if (isTrapped)
+        {
+            HandleTrapEscape();
+            return; // Nem mozoghatunk!
+        }
+
+        // 2. HA SZELLEMEK VAGYUNK
+        if (isGhost) { MoveGhost(); return; }
 
         HandleInput();
 
-        // Külön logika a két kasztnak
-        if (isHunter.Value)
-        {
-            MoveHunter();
-            LookHunter();
-        }
-        else
-        {
-            MoveDeer();
-            LookDeer();
-        }
+        if (isHunter.Value) { MoveHunter(); LookHunter(); }
+        else { MoveDeer(); LookDeer(); }
     }
     private void LateUpdate()
     {
@@ -205,6 +221,7 @@ public class PlayerNetworkController : NetworkBehaviour
     }
     private void MoveHunter()
     {
+        if (!characterController.enabled) return; // [ÚJ] Védelem
         ApplyGravity();
 
         float speed = GetCurrentSpeed();
@@ -215,6 +232,7 @@ public class PlayerNetworkController : NetworkBehaviour
     }
     private void MoveDeer()
     {
+        if (!characterController.enabled) return; // [ÚJ] Védelem
         ApplyGravity();
 
         // DASH KEZELÉS
@@ -309,6 +327,33 @@ public class PlayerNetworkController : NetworkBehaviour
             tpsMount.rotation = Quaternion.Euler(cameraPitch, cameraYaw, 0f);
         }
     }
+    private void MoveGhost()
+    {
+        // Szabad kamera forgás (mint a Hunter FPS nézete)
+        float mouseX = lookInput.x * mouseSensitivity * Time.deltaTime * 10f;
+        float mouseY = lookInput.y * mouseSensitivity * Time.deltaTime * 10f;
+
+        // Forgatjuk a kamerát (itt nincs test, csak kamera)
+        transform.Rotate(Vector3.up * mouseX);
+
+        // Függõleges forgás (Pitch)
+        // Megjegyzés: Itt a transform.Rotate-et használjuk a "repülõgép" érzéshez,
+        // vagy visszaállíthatjuk az FPS logikát.
+        // Egyszerûsítve: Használjuk a sceneCamera-t közvetlenül? Nem, a Netcode-ban a Mountokat forgatjuk.
+
+        // Maradunk a LookHunter logikánál a forgásra, de a mozgás más:
+        LookHunter(); // Ez jó a forgásra
+
+        // Mozgás: Nincs CharacterController, sima Transform.Translate
+        float speed = 10f; // Gyors repülés
+        Vector3 move = transform.right * moveInput.x + transform.forward * moveInput.y;
+
+        // Fel-le mozgás (Space / Ctrl)
+        if (Keyboard.current.spaceKey.isPressed) move += Vector3.up;
+        if (Keyboard.current.leftCtrlKey.isPressed) move -= Vector3.up;
+
+        transform.position += move * speed * Time.deltaTime;
+    }
     [ServerRpc]
     private void ApplySprintCostServerRpc()
     {
@@ -323,19 +368,17 @@ public class PlayerNetworkController : NetworkBehaviour
         if (!IsOwner) return;
 
         Debug.Log("Spectator Mód Aktiválva!");
+        isGhost = true; // [ÚJ] Jelezzük, hogy szellemek vagyunk
 
         // 1. Fizika kikapcsolása
-        characterController.enabled = false; // Átmegy a falon
+        if (characterController != null) characterController.enabled = false;
 
-        // 2. Modellek eltüntetése (hogy ne zavarja a látványt)
-        hunterModel.SetActive(false);
-        deerModel.SetActive(false);
+        // 2. Modellek eltüntetése
+        if (hunterModel) hunterModel.SetActive(false);
+        if (deerModel) deerModel.SetActive(false);
 
-        // 3. Repülés engedélyezése (Egyszerûsítve: Gravity kikapcsolása a Move-ban)
-        // Ehhez a Move() metódusban kell egy feltétel, vagy átállítjuk a gravity változót 0-ra.
-        gravity = 0f;
-        walkSpeed = 10f; // Gyorsabb repülés
-        sprintSpeed = 20f;
+        // 3. UI frissítés (opcionális)
+        // GameHUD.Instance.ShowSpectatorUI();
     }
 
     // [NEW] Hunter Pánik Mód (Amikor elfogy a Sanity)
@@ -377,5 +420,43 @@ public class PlayerNetworkController : NetworkBehaviour
         hunterSprintCost = 0f;
 
         // UI üzenet: "RUN TO THE SAFE ZONE!" (GameHUD hívás)
+    }
+    private void HandleTrapEscape()
+    {
+        if (Keyboard.current.spaceKey.wasPressedThisFrame)
+        {
+            currentTrapPresses++;
+            // UI visszajelzés (pl. egy csúszka) jöhet ide
+            Debug.Log($"Szabadulás: {currentTrapPresses}/{trapEscapePressesNeeded}");
+
+            if (currentTrapPresses >= trapEscapePressesNeeded)
+            {
+                // Sikerült kiszabadulni!
+                RequestUntrapServerRpc();
+            }
+        }
+    }
+    [ClientRpc]
+    public void SetTrappedClientRpc(bool trapped)
+    {
+        isTrapped = trapped;
+        if (trapped)
+        {
+            currentTrapPresses = 0;
+            Debug.Log("MEDVECSAPDA! NYOMKODD A SPACE-T!");
+            // Itt játszhatsz le csattanó hangot
+        }
+        else
+        {
+            Debug.Log("KISZABADULTÁL!");
+        }
+    }
+
+    // [NEW] Kliens kéri: "Kiszabadultam!"
+    [ServerRpc]
+    private void RequestUntrapServerRpc()
+    {
+        // Kiszabadítjuk mindenkinél
+        SetTrappedClientRpc(false);
     }
 }
