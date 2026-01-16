@@ -4,17 +4,16 @@ using UnityEngine;
 using Unity.Netcode;
 using System.Linq;
 
-// Profi tipp: Singleton minta a könnyû eléréshez, de NetworkBehaviour-be csomagolva.
 public class NetworkGameManager : NetworkBehaviour
 {
     public static NetworkGameManager Instance { get; private set; }
 
-    // State management: Lobby, InGame, Ending
-    public enum GameState { Lobby, InGame, GameOver }
+    public enum GameState { Lobby, InGame, HunterPanic, GameOver }
     private NetworkVariable<GameState> currentGameState = new NetworkVariable<GameState>(GameState.Lobby);
 
-    // Lista a csatlakozott játékosokról
     private Dictionary<ulong, PlayerNetworkController> connectedPlayers = new Dictionary<ulong, PlayerNetworkController>();
+
+    private List<SafeZone> allSafeZones = new List<SafeZone>();
 
     private void Awake()
     {
@@ -24,47 +23,120 @@ public class NetworkGameManager : NetworkBehaviour
         }
         Instance = this;
     }
-
-    // Amikor egy játékos csatlakozik, regisztráljuk
     public void RegisterPlayer(ulong clientId, PlayerNetworkController playerScript)
     {
-        if (!connectedPlayers.ContainsKey(clientId))
-        {
-            connectedPlayers.Add(clientId, playerScript);
-            Debug.Log($"[Server] Játékos regisztrálva: {clientId}");
-        }
+        if (!connectedPlayers.ContainsKey(clientId)) connectedPlayers.Add(clientId, playerScript);
     }
-
-    // Keresd meg a StartGameServerRpc metódust, és írd át a foreach ciklust:
     [ServerRpc(RequireOwnership = false)]
     public void StartGameServerRpc()
     {
         if (!IsServer) return;
+        currentGameState.Value = GameState.InGame;
 
-        Debug.Log("[Server] Játék indítása... Hunter sorsolása.");
-
-        // currentGameState.Value = GameState.InGame; // Ha használod a state-et
-
+        // Hunter sorsolás (régi kód) ...
         List<ulong> clientIds = connectedPlayers.Keys.ToList();
         if (clientIds.Count == 0) return;
-
         ulong hunterId = clientIds[Random.Range(0, clientIds.Count)];
 
         foreach (var player in connectedPlayers)
         {
             bool isHunter = (player.Key == hunterId);
-
-            // [JAVÍTÁS] Nem hívunk RPC-t! Közvetlenül beállítjuk az értéket.
-            // Mivel Serveren vagyunk, és a NetworkVariable WritePermission-je Server, ezt megtehetjük.
             player.Value.isHunter.Value = isHunter;
-
-            Debug.Log($"[Server] {player.Key} szerepe beállítva: {(isHunter ? "HUNTER" : "DEER")}");
         }
+    }
+    public void OnPlayerDied(ulong victimId, bool wasHunter)
+    {
+        if (!IsServer) return;
+
+        if (wasHunter)
+        {
+            // HA A VADÁSZ HAL MEG (ELFOGYOTT A SANITY) -> PANIC MODE!
+            Debug.Log("VADÁSZ LEESETT! PÁNIK MÓD INDUL!");
+            TriggerHunterPanicMode(victimId);
+        }
+        else
+        {
+            // HA SZARVAS HAL MEG -> SPECTATOR
+            Debug.Log($"Szarvas ({victimId}) meghalt. Spectator mód.");
+
+            // Értesítjük a klienst, hogy legyen szellem
+            if (connectedPlayers.TryGetValue(victimId, out var playerScript))
+            {
+                playerScript.SetGhostModeClientRpc();
+            }
+
+            // Ellenõrizzük, van-e még élõ szarvas
+            CheckDeerWinCondition();
+        }
+    }
+    private void TriggerHunterPanicMode(ulong hunterId)
+    {
+        currentGameState.Value = GameState.HunterPanic;
+
+        // 1. Megkeressük a vadászt
+        if (connectedPlayers.TryGetValue(hunterId, out var hunterScript))
+        {
+            // Átváltoztatjuk "Prédává" (vizuálisan szarvassá, fegyver elvétel)
+            hunterScript.TransformToPanicModeClientRpc();
+
+            // 2. Safe Zone kiválasztása (NEM A LEGKÖZELEBBI!)
+            if (allSafeZones.Count > 0)
+            {
+                SafeZone selectedZone = null;
+
+                if (allSafeZones.Count == 1)
+                {
+                    selectedZone = allSafeZones[0];
+                }
+                else
+                {
+                    // Rendezzük távolság szerint (Csökkenõ sorrend = legtávolabbi elõl)
+                    var sortedZones = allSafeZones.OrderByDescending(z => Vector3.Distance(z.transform.position, hunterScript.transform.position)).ToList();
+
+                    // Veszünk egyet a legtávolabbiak közül (pl. a felsõ 50%-ból random)
+                    int safeIndex = Random.Range(0, Mathf.CeilToInt(sortedZones.Count / 2f));
+                    selectedZone = sortedZones[safeIndex];
+                }
+
+                if (selectedZone != null)
+                {
+                    selectedZone.SetActive(true);
+                    Debug.Log($"Kijelölt menekülõ pont: {selectedZone.name}");
+                    // Itt lehetne ClientRpc-vel jelezni a Hunternek, hol a ház (Waypoint)
+                }
+            }
+        }
+    }
+    private void CheckDeerWinCondition()
+    {
+        // Megszámoljuk az élõ szarvasokat
+        int livingDeer = 0;
+        foreach (var p in connectedPlayers.Values)
+        {
+            // Ha nem hunter és van élete
+            if (!p.isHunter.Value && p.GetComponent<HealthComponent>().currentHealth.Value > 0)
+            {
+                livingDeer++;
+            }
+        }
+
+        if (livingDeer == 0)
+        {
+            EndGameServerRpc(true); // Hunter nyert (mindenki halott)
+        }
+    }
+    [ServerRpc]
+    public void EndGameServerRpc(bool hunterWon)
+    {
+        currentGameState.Value = GameState.GameOver;
+        Debug.Log(hunterWon ? "VADÁSZ NYERT!" : "SZARVASOK NYERTEK!");
+    }
+    public bool IsHunterInPanic()
+    {
+        return currentGameState.Value == GameState.HunterPanic;
     }
     public override void OnNetworkSpawn()
     {
-        // [ÚJ] Amikor a GameManager létrejön (Pálya betöltéskor),
-        // körbenézünk, hogy vannak-e már játékosok, akik "kimaradtak" a regisztrációból.
         if (IsServer)
         {
             foreach (var client in NetworkManager.Singleton.ConnectedClientsList)
@@ -79,12 +151,14 @@ public class NetworkGameManager : NetworkBehaviour
                 }
             }
         }
+        if (IsServer)
+        {
+            allSafeZones = FindObjectsOfType<SafeZone>().ToList();
+            foreach (var zone in allSafeZones) zone.SetActive(false); // Kikapcsoljuk õket
+        }
 
-        // Iratkozzunk fel a késõbbi csatlakozókra is, biztos ami biztos
         NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnected;
     }
-
-    // Takarítás, ha megszûnik a GameManager
     public override void OnNetworkDespawn()
     {
         if (NetworkManager.Singleton != null)
@@ -92,10 +166,8 @@ public class NetworkGameManager : NetworkBehaviour
             NetworkManager.Singleton.OnClientConnectedCallback -= OnClientConnected;
         }
     }
-
     private void OnClientConnected(ulong clientId)
     {
-        // Ez a normál csatlakozásokat kezeli majd játék közben
         if (IsServer && NetworkManager.Singleton.ConnectedClients.TryGetValue(clientId, out var client))
         {
             if (client.PlayerObject != null)

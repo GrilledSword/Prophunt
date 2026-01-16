@@ -6,17 +6,22 @@ using UnityEngine.InputSystem;
 [RequireComponent(typeof(HealthComponent))]
 public class PlayerNetworkController : NetworkBehaviour
 {
-    [Header("Mozgás")]
+    [Header("Mozgás Beállítások")]
     [SerializeField] private float walkSpeed = 5f;
     [SerializeField] private float sprintSpeed = 9f;
-    [SerializeField] private float lookSpeed = 2f;
     [SerializeField] private float hunterSprintCost = 5f;
+    [SerializeField] private float rotationSmoothTime = 0.1f; // Milyen gyorsan forduljon a szarvas
     [SerializeField] private float gravity = -9.81f;
 
     [Header("Dash (Csak Szarvas)")]
     [SerializeField] private float dashForce = 20f;
     [SerializeField] private float dashDuration = 0.2f;
     [SerializeField] private float dashCooldown = 3f;
+
+    [Header("Kamera Beállítások")]
+    [SerializeField] private float mouseSensitivity = 2.0f; // Egér sebessége
+    [SerializeField] private float tpsCameraDistance = 4.0f; // Milyen messze legyen a kamera a szarvastól
+    [SerializeField] private Vector2 pitchLimits = new Vector2(-70f, 80f); // Fel-le nézés limit
 
     [Header("References")]
     [SerializeField] private GameObject hunterModel;
@@ -32,8 +37,13 @@ public class PlayerNetworkController : NetworkBehaviour
     private Vector2 lookInput;
     private Vector3 velocity;
     private Camera sceneCamera;
-    private float xRotation = 0f;
 
+    // Kamera forgás változók
+    private float cameraPitch = 0f; // Fel-Le
+    private float cameraYaw = 0f;   // Jobbra-Balra
+    private float currentRotationVelocity; // Simításhoz
+
+    // Dash változók
     private bool isDashing;
     private float dashEndTime;
     private float lastDashTime;
@@ -57,6 +67,9 @@ public class PlayerNetworkController : NetworkBehaviour
             sceneCamera = Camera.main;
             Cursor.lockState = CursorLockMode.Locked;
             Cursor.visible = false;
+
+            // Kezdõ forgás beállítása
+            cameraYaw = transform.rotation.eulerAngles.y;
 
             TryConnectToHUD();
         }
@@ -117,13 +130,22 @@ public class PlayerNetworkController : NetworkBehaviour
     private void Update()
     {
         if (!IsOwner) return;
-        if (!isUIConnected)
-        {
-            TryConnectToHUD();
-        }
+
+        if (!isUIConnected) TryConnectToHUD();
+
         HandleInput();
-        Move();
-        Look();
+
+        // Külön logika a két kasztnak
+        if (isHunter.Value)
+        {
+            MoveHunter();
+            LookHunter();
+        }
+        else
+        {
+            MoveDeer();
+            LookDeer();
+        }
     }
     private void LateUpdate()
     {
@@ -134,9 +156,24 @@ public class PlayerNetworkController : NetworkBehaviour
     private void UpdateCameraPosition()
     {
         Transform targetMount = isHunter.Value ? fpsMount : tpsMount;
-        if (targetMount != null)
+        if (targetMount == null) return;
+
+        if (isHunter.Value)
         {
+            // FPS: Pontosan a mounton (szemben)
             sceneCamera.transform.position = targetMount.position;
+            sceneCamera.transform.rotation = targetMount.rotation;
+        }
+        else
+        {
+            // TPS: A mount mögött "tpsCameraDistance" távolságra
+            // Mivel a LookDeer() már beforgatta a tpsMount-ot a megfelelõ irányba,
+            // csak hátra kell lépnünk a mount forward irányából.
+            Vector3 targetPos = targetMount.position - (targetMount.forward * tpsCameraDistance);
+
+            // (Opcionális: Itt lehetne fal-detektálást betenni Raycasttal, hogy ne menjen át a falon)
+
+            sceneCamera.transform.position = targetPos;
             sceneCamera.transform.rotation = targetMount.rotation;
         }
     }
@@ -144,20 +181,17 @@ public class PlayerNetworkController : NetworkBehaviour
     {
         if (Keyboard.current != null)
         {
-            // WASD
             Vector2 input = Keyboard.current.wKey.ReadValue() * Vector2.up +
                             Keyboard.current.sKey.ReadValue() * Vector2.down +
                             Keyboard.current.aKey.ReadValue() * Vector2.left +
                             Keyboard.current.dKey.ReadValue() * Vector2.right;
             moveInput = input.normalized;
 
-            // DASH (Left Alt vagy Ctrl) - Csak Szarvas
             if (!isHunter.Value && Keyboard.current.leftAltKey.wasPressedThisFrame)
             {
                 TryDash();
             }
         }
-
         if (Mouse.current != null) lookInput = Mouse.current.delta.ReadValue();
     }
     private void TryDash()
@@ -169,32 +203,60 @@ public class PlayerNetworkController : NetworkBehaviour
             lastDashTime = Time.time;
         }
     }
-    private void Move()
+    private void MoveHunter()
     {
-        if (characterController == null) return;
+        ApplyGravity();
 
-        // 1. DASH LOGIKA
+        float speed = GetCurrentSpeed();
+        // A mozgás a test irányához (transform) képest történik
+        Vector3 move = transform.right * moveInput.x + transform.forward * moveInput.y;
+
+        characterController.Move(move * speed * Time.deltaTime);
+    }
+    private void MoveDeer()
+    {
+        ApplyGravity();
+
+        // DASH KEZELÉS
         if (isDashing)
         {
             if (Time.time < dashEndTime)
             {
+                // Dash irány: amerre a karakter épp néz
                 Vector3 dashDir = transform.forward;
-                if (moveInput.magnitude > 0)
+                if (moveInput.magnitude > 0 && sceneCamera != null)
                 {
-                    dashDir = transform.right * moveInput.x + transform.forward * moveInput.y;
+                    // Vagy amerre nyomjuk, a kamerához képest
+                    float targetAngle = Mathf.Atan2(moveInput.x, moveInput.y) * Mathf.Rad2Deg + sceneCamera.transform.eulerAngles.y;
+                    dashDir = Quaternion.Euler(0f, targetAngle, 0f) * Vector3.forward;
                 }
                 characterController.Move(dashDir * dashForce * Time.deltaTime);
                 return;
             }
-            else
-            {
-                isDashing = false;
-            }
+            else isDashing = false;
         }
 
-        // 2. SPRINT LOGIKA
+        // MOZGÁS KAMERA RELATÍV
+        if (moveInput.magnitude >= 0.1f && sceneCamera != null)
+        {
+            // Kiszámoljuk, merre van az "elõre" a kamerához képest
+            // Mathf.Atan2 a bemeneti vektor szögét adja meg
+            // Hozzáadjuk a kamera Y forgását
+            float targetAngle = Mathf.Atan2(moveInput.x, moveInput.y) * Mathf.Rad2Deg + sceneCamera.transform.eulerAngles.y;
+
+            // Simítjuk a forgást, hogy ne pattanjon a karakter
+            float angle = Mathf.SmoothDampAngle(transform.eulerAngles.y, targetAngle, ref currentRotationVelocity, rotationSmoothTime);
+            transform.rotation = Quaternion.Euler(0f, angle, 0f);
+
+            // A kiszámolt irányba mozgunk
+            Vector3 moveDir = Quaternion.Euler(0f, targetAngle, 0f) * Vector3.forward;
+            characterController.Move(moveDir.normalized * GetCurrentSpeed() * Time.deltaTime);
+        }
+    }
+    private float GetCurrentSpeed()
+    {
         bool isSprinting = Keyboard.current != null && Keyboard.current.leftShiftKey.isPressed;
-        float currentSpeed = walkSpeed;
+        float speed = walkSpeed;
 
         if (isSprinting && moveInput.magnitude > 0)
         {
@@ -202,37 +264,50 @@ public class PlayerNetworkController : NetworkBehaviour
             {
                 if (healthComponent.currentHealth.Value > 5f)
                 {
-                    currentSpeed = sprintSpeed;
+                    speed = sprintSpeed;
                     ApplySprintCostServerRpc();
                 }
             }
-            else
-            {
-                currentSpeed = sprintSpeed;
-            }
+            else speed = sprintSpeed;
         }
-
-        // 3. MOZGÁS
-        Vector3 move = transform.right * moveInput.x + transform.forward * moveInput.y;
-        characterController.Move(move * currentSpeed * Time.deltaTime);
-
-        // Gravitáció
+        return speed;
+    }
+    private void ApplyGravity()
+    {
         if (characterController.isGrounded && velocity.y < 0) velocity.y = -2f;
         velocity.y += gravity * Time.deltaTime;
         characterController.Move(velocity * Time.deltaTime);
     }
-    private void Look()
+    private void LookHunter()
     {
-        float mouseX = lookInput.x * 2f * Time.deltaTime;
-        float mouseY = lookInput.y * 2f * Time.deltaTime;
+        float mouseX = lookInput.x * mouseSensitivity * Time.deltaTime * 10f;
+        float mouseY = lookInput.y * mouseSensitivity * Time.deltaTime * 10f;
 
-        xRotation -= mouseY;
-        xRotation = Mathf.Clamp(xRotation, -90f, 90f);
+        cameraPitch -= mouseY;
+        cameraPitch = Mathf.Clamp(cameraPitch, -90f, 90f);
 
+        // A testet forgatjuk horizontálisan
         transform.Rotate(Vector3.up * mouseX);
 
-        if (fpsMount != null) fpsMount.localRotation = Quaternion.Euler(xRotation, 0f, 0f);
-        if (tpsMount != null) tpsMount.localRotation = Quaternion.Euler(xRotation, 0f, 0f);
+        // A Mountot (és a kamerát) bólintjuk vertikálisan
+        if (fpsMount != null)
+            fpsMount.localRotation = Quaternion.Euler(cameraPitch, 0f, 0f);
+    }
+    private void LookDeer()
+    {
+        float mouseX = lookInput.x * mouseSensitivity * Time.deltaTime * 10f;
+        float mouseY = lookInput.y * mouseSensitivity * Time.deltaTime * 10f;
+
+        // Csak a belsõ változókat frissítjük, a testet NEM forgatjuk
+        cameraYaw += mouseX;
+        cameraPitch -= mouseY;
+        cameraPitch = Mathf.Clamp(cameraPitch, pitchLimits.x, pitchLimits.y);
+
+        // A TPS Mountot forgatjuk a világban (ez a pivot pont a fejünknél)
+        if (tpsMount != null)
+        {
+            tpsMount.rotation = Quaternion.Euler(cameraPitch, cameraYaw, 0f);
+        }
     }
     [ServerRpc]
     private void ApplySprintCostServerRpc()
@@ -241,5 +316,66 @@ public class PlayerNetworkController : NetworkBehaviour
         {
             healthComponent.ModifyHealth(-hunterSprintCost * Time.deltaTime);
         }
+    }
+    [ClientRpc]
+    public void SetGhostModeClientRpc()
+    {
+        if (!IsOwner) return;
+
+        Debug.Log("Spectator Mód Aktiválva!");
+
+        // 1. Fizika kikapcsolása
+        characterController.enabled = false; // Átmegy a falon
+
+        // 2. Modellek eltüntetése (hogy ne zavarja a látványt)
+        hunterModel.SetActive(false);
+        deerModel.SetActive(false);
+
+        // 3. Repülés engedélyezése (Egyszerûsítve: Gravity kikapcsolása a Move-ban)
+        // Ehhez a Move() metódusban kell egy feltétel, vagy átállítjuk a gravity változót 0-ra.
+        gravity = 0f;
+        walkSpeed = 10f; // Gyorsabb repülés
+        sprintSpeed = 20f;
+    }
+
+    // [NEW] Hunter Pánik Mód (Amikor elfogy a Sanity)
+    [ClientRpc]
+    public void TransformToPanicModeClientRpc()
+    {
+        Debug.Log("A VADÁSZBÓL PRÉDA LETT! FUSS!");
+
+        // 1. Fegyver elvétele (Kikapcsoljuk a ShootingSystemet)
+        var shootingSystem = GetComponent<HunterShootingSystem>();
+        if (shootingSystem != null) shootingSystem.enabled = false;
+
+        // 2. Vizuális csere: Legyen Szarvas (vagy ami be van állítva deerModel-nek)
+        // Mivel a `UpdateVisuals` a `isHunter` alapján dönt, át kell vernünk a rendszert,
+        // vagy bevezetni egy új változót. A legegyszerûbb:
+
+        if (IsOwner)
+        {
+            // Hunterként eddig nem láttuk magunkat (FPS), most váltsunk TPS-re!
+            // Ehhez át kell állítani a kamerát a TPS Mountra.
+            // A legegyszerûbb, ha "szoftveresen" átírjuk, hogy mostantól "Szarvas" a logikánk.
+            // DE! A szerver tudja, hogy Hunterek vagyunk.
+
+            // MVP MEGOLDÁS: Csak a vizuált és a kamerát állítjuk át lokálisan.
+            hunterModel.SetActive(false);
+            deerModel.SetActive(true); // Látjuk magunkat
+
+            // Kamera átállítása TPS-re (A UpdateCameraPosition-t kell "becsapni")
+            // Ezt egy bool flaggel oldjuk meg.
+        }
+        else
+        {
+            // Mások is lássák, hogy átváltozott!
+            hunterModel.SetActive(false);
+            deerModel.SetActive(true);
+        }
+
+        // Sprint korlát levétele (Adrenalin!)
+        hunterSprintCost = 0f;
+
+        // UI üzenet: "RUN TO THE SAFE ZONE!" (GameHUD hívás)
     }
 }

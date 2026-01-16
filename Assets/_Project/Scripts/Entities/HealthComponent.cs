@@ -84,8 +84,28 @@ public class HealthComponent : NetworkBehaviour
 
     private void Die()
     {
-        OnDeath?.Invoke(OwnerClientId);
-        GetComponent<NetworkObject>().Despawn(true);
+        // [MODIFIED]
+
+        // Nem semmisítjük meg azonnal, hanem szólunk a Managernek
+        if (NetworkGameManager.Instance != null)
+        {
+            NetworkGameManager.Instance.OnPlayerDied(OwnerClientId, isHunter);
+        }
+
+        // Ha Szarvas, akkor Despawnolhat (vagyis a vizuál eltûnik, de a Ghost mód aktív marad a kliensen)
+        // A PlayerController kezeli a ghost módot, itt csak a "testet" tüntetjük el.
+        if (!isHunter)
+        {
+            // Fontos: Ne Despawnoljuk teljesen a NetworkObjectet, mert akkor a Kliens kapcsolata is megszakad a karakterrel!
+            // Helyette csak rejtsük el a szerveren mindenki elõl.
+            HidePlayerServerRpc();
+        }
+        else
+        {
+            // Hunter pánik esetén NEM hal meg, hanem tovább él (0 HP-val vagy újratöltve kicsit)
+            // Adjunk neki egy kis "adrenalin" életet a futáshoz
+            currentHealth.Value = 100f;
+        }
     }
 
     [ClientRpc]
@@ -95,5 +115,12 @@ public class HealthComponent : NetworkBehaviour
         {
             audioSource.PlayOneShot(lowHealthSound);
         }
+    }
+    [ServerRpc]
+    private void HidePlayerServerRpc()
+    {
+        // Kikapcsoljuk a hit boxot és a láthatóságot, de a NetworkObject marad!
+        GetComponent<Collider>().enabled = false;
+        // A vizuális elrejtést a PlayerController GhostModeClientRpc-je intézi
     }
 }
