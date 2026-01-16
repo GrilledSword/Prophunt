@@ -1031,7 +1031,7 @@ MonoBehaviour:
   ShowTopMostFoldoutHeaderGroup: 1
   lobbyTime: 10
   hunterReleaseTime: 15
-  minPlayersToStart: 2
+  minPlayersToStart: 1
   timerText: {fileID: 1766661467}
   lobbyUI: {fileID: 707996569}
 --- !u!1001 &1216853486

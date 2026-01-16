@@ -38,16 +38,16 @@ public class GameLoopManager : NetworkBehaviour
         {
             NetworkManager.Singleton.SceneManager.OnLoadEventCompleted += OnSceneLoaded;
         }
+
+        // [FONTOS] Feliratkozás az idõzítõre
         currentTimer.OnValueChanged += OnTimerChanged;
 
-        // [JAVÍTÁS] Ha betöltött a pálya (és létrejött ez a script), 
-        // azonnal reseteljük a UI-t LOKÁLISAN. Nem kell RPC!
+        // [JAVÍTÁS] Lokális UI reset (nem RPC, mert spawnoláskor fut)
         if (GameHUD.Instance != null)
         {
             GameHUD.Instance.ResetWinScreen();
         }
         if (lobbyUI != null) lobbyUI.SetActive(true);
-        if (timerText != null) timerText.gameObject.SetActive(true); // Biztos látszódjon
     }
     private void OnSceneLoaded(string sceneName, UnityEngine.SceneManagement.LoadSceneMode loadSceneMode, List<ulong> clientsCompleted, List<ulong> clientsTimedOut)
     {
@@ -57,7 +57,7 @@ public class GameLoopManager : NetworkBehaviour
         isLobbyTimerRunning = false;
         isReleaseTimerRunning = false;
 
-        // Spawn pontok keresése (Find)
+        // Újrakeresés, mert a referenciák elvesztek
         GameObject lobbyObj = GameObject.Find("LobbySpawnPoint");
         if (lobbyObj != null) lobbySpawnPoint = lobbyObj.transform;
 
@@ -68,7 +68,6 @@ public class GameLoopManager : NetworkBehaviour
             foreach (Transform child in spawnsRoot.transform) gameSpawnPoints.Add(child);
         }
 
-        // Teleport
         if (lobbySpawnPoint != null)
         {
             foreach (ulong clientId in clientsCompleted)
@@ -77,26 +76,29 @@ public class GameLoopManager : NetworkBehaviour
             }
         }
 
-        // A NetworkGameManager ResetLobby-ja majd intézi a Player resetet
+        // Jelezzük az Update-nek, hogy volt reset
+        isSceneReloaded = true;
     }
     private void Update()
     {
         if (!IsServer) return;
 
+        // [JAVÍTÁS] Restart kezelés a következõ frame-ben
         if (isSceneReloaded && IsSpawned)
         {
             isSceneReloaded = false;
-            // Biztos, ami biztos: Mindenkinek reseteljük a UI-t (de csak ha már spawnoltunk!)
+
+            // Itt már biztonságos az RPC
             ResetUIClientRpc();
 
-            // ÉS A LEGFONTOSABB:
-            // A NetworkGameManager állapotát is vissza kell állítani LOBBY-ra!
             if (NetworkGameManager.Instance != null)
             {
+                // Kényszerítjük a Lobby állapotot
                 NetworkGameManager.Instance.currentGameState.Value = NetworkGameManager.GameState.Lobby;
             }
         }
-        // --- LOBBY FÁZIS ---
+
+        // --- LOBBY TIMER ---
         if (!isMatchStarted)
         {
             int playerCount = NetworkManager.Singleton.ConnectedClientsList.Count;
@@ -115,16 +117,15 @@ public class GameLoopManager : NetworkBehaviour
                 }
             }
         }
-        // --- HUNTER RELEASE FÁZIS (IN GAME ELEJE) ---
+        // --- RELEASE TIMER ---
         else if (isReleaseTimerRunning)
         {
             currentTimer.Value -= Time.deltaTime;
             if (currentTimer.Value <= 0f)
             {
                 isReleaseTimerRunning = false;
-                // Vége a bújócskának
-                NetworkGameManager.Instance.SetHunterFree();
-                //ToggleTimerTextClientRpc(false); // Eltüntetjük az órát
+                NetworkGameManager.Instance.SetHunterFree(); // Mehet a menet!
+                // Nem rejtjük el a timert ClientRpc-vel, elég ha az értéke 0 lesz, az OnTimerChanged elintézi
             }
         }
     }
@@ -135,15 +136,11 @@ public class GameLoopManager : NetworkBehaviour
 
         NetworkGameManager.Instance.StartGameServerRpc();
         DistributePlayersToSpawnPoints();
-
         ToggleLobbyUIClientRpc(false);
 
-        // Idõzítõ beállítása
+        // Hunter Release indítása
         isReleaseTimerRunning = true;
         currentTimer.Value = hunterReleaseTime;
-
-        // [JAVÍTÁS] Kényszerítjük a megjelenést mindenkinél!
-        ShowTimerUIClientRpc();
     }
     private void DistributePlayersToSpawnPoints()
     {
@@ -183,16 +180,19 @@ public class GameLoopManager : NetworkBehaviour
     }
     private void OnTimerChanged(float oldVal, float newVal)
     {
+        // Ha nincs HUD, nincs mit frissíteni
         if (GameHUD.Instance == null) return;
 
         if (newVal > 0)
         {
+            // Eldöntjük, mit írjunk ki
             string prefix = isMatchStarted ? "RELEASE: " : "START: ";
             GameHUD.Instance.UpdateTimer($"{prefix}{Mathf.CeilToInt(newVal)}");
         }
         else
         {
-            GameHUD.Instance.UpdateTimer(""); // Eltüntetjük
+            // Ha 0 vagy kevesebb, töröljük a szöveget
+            GameHUD.Instance.UpdateTimer("");
         }
     }
     [ClientRpc]
@@ -208,33 +208,6 @@ public class GameLoopManager : NetworkBehaviour
             GameHUD.Instance.ResetWinScreen(); // Eltünteti a gyõzelmi feliratot
         }
         if (lobbyUI != null) lobbyUI.SetActive(true); // Lobby UI visszajön
-    }
-    private void UpdateTimerUI(float previous, float current)
-    {
-        if (timerText != null)
-        {
-            // Ha a TimerText inaktív lenne, kapcsoljuk be (kliens oldali biztositek)
-            if (!timerText.gameObject.activeInHierarchy && current > 0)
-            {
-                timerText.gameObject.SetActive(true);
-            }
-
-            if (current > 0)
-            {
-                // Ha MatchStarted van, de még ReleaseTimer fut -> RELEASE
-                // Ha nem MatchStarted -> START
-                string prefix = isMatchStarted ? "RELEASE: " : "START: ";
-                timerText.text = $"{prefix}{Mathf.CeilToInt(current)}";
-
-                // Extra színkód: Release alatt legyen PIROS a szöveg
-                if (isMatchStarted) timerText.color = Color.red;
-                else timerText.color = Color.white;
-            }
-            else
-            {
-                timerText.text = "";
-            }
-        }
     }
     [ClientRpc]
     private void ShowTimerUIClientRpc()

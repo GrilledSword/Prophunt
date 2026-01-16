@@ -64,7 +64,18 @@ public class GameHUD : MonoBehaviour
     }
     public void UpdateTimer(string text)
     {
-        if (timerText != null) timerText.text = text;
+        if (timerText != null)
+        {
+            // Ha van szöveg (pl. "START: 5"), akkor legyen aktív
+            bool shouldBeActive = !string.IsNullOrEmpty(text);
+
+            if (timerText.gameObject.activeSelf != shouldBeActive)
+            {
+                timerText.gameObject.SetActive(shouldBeActive);
+            }
+
+            timerText.text = text;
+        }
     }
     public void ShowWinScreen(string text)
     {
