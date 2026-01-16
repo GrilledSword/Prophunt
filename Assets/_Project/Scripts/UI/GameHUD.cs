@@ -6,13 +6,21 @@ public class GameHUD : MonoBehaviour
 {
     public static GameHUD Instance { get; private set; }
 
-    [Header("Általános UI")]
-    [SerializeField] private Slider healthBar;
-    [SerializeField] private Image healthFill;
-    [SerializeField] private TextMeshProUGUI hpText;
+    [Header("Saját Állapot")]
+    [SerializeField] private Slider myHealthBar;
+    [SerializeField] private Image myHealthFill;
+    [SerializeField] private TextMeshProUGUI myHpText;
 
-    [Header("Vadász UI")]
+    [Header("Hunter Publikus Infó (Mindenki látja)")]
+    [SerializeField] private GameObject hunterInfoPanel; // Szarvasoknak
+    [SerializeField] private Slider hunterSanityBar;     // Szarvasoknak
+    [SerializeField] private TextMeshProUGUI hunterSanityText;
+
+    [Header("Egyéb UI")]
     [SerializeField] private GameObject crosshair;
+    [SerializeField] private TextMeshProUGUI timerText; // KÖZÉPEN FENT
+    [SerializeField] private GameObject winPanel;
+    [SerializeField] private TextMeshProUGUI winText;
 
     [Header("Színek")]
     [SerializeField] private Color hunterHealthColor = Color.red;
@@ -29,31 +37,45 @@ public class GameHUD : MonoBehaviour
         Instance = this;
         Debug.Log("GameHUD Inicializálva!"); // Debug, hogy lássuk, él-e
     }
-
     public void SetRoleUI(bool isHunter)
     {
+        // 1. Saját nézet
         if (crosshair != null) crosshair.SetActive(isHunter);
+        if (myHealthFill != null) myHealthFill.color = isHunter ? hunterHealthColor : deerHealthColor;
 
-        if (healthFill != null)
+        // 2. Hunter Info Panel (Csak Szarvasok látják a publikus adatot)
+        if (hunterInfoPanel != null)
         {
-            healthFill.color = isHunter ? hunterHealthColor : deerHealthColor;
+            hunterInfoPanel.SetActive(!isHunter);
+        }
+
+        // Reset Win Panel
+        if (winPanel != null) winPanel.SetActive(false);
+    }
+    public void UpdateMyHealth(float currentHealth)
+    {
+        if (myHealthBar != null) myHealthBar.value = currentHealth;
+        if (myHpText != null) myHpText.text = $"{Mathf.CeilToInt(currentHealth)}";
+    }
+    public void UpdateHunterSanity(float sanity)
+    {
+        if (hunterSanityBar != null) hunterSanityBar.value = sanity;
+        if (hunterSanityText != null) hunterSanityText.text = $"HUNTER SANITY: {Mathf.CeilToInt(sanity)}%";
+    }
+    public void UpdateTimer(string text)
+    {
+        if (timerText != null) timerText.text = text;
+    }
+    public void ShowWinScreen(string text)
+    {
+        if (winPanel != null)
+        {
+            winPanel.SetActive(true);
+            if (winText != null) winText.text = text;
         }
     }
-
-    public void UpdateHealth(float currentHealth)
+    public void ResetWinScreen()
     {
-        // Debug, hogy lássuk, kap-e adatot
-        // Debug.Log($"HUD Update: {currentHealth}"); 
-
-        if (healthBar != null)
-        {
-            healthBar.value = currentHealth;
-        }
-
-        if (hpText != null)
-        {
-            // Egész számmá kerekítve írjuk ki
-            hpText.text = $"{Mathf.CeilToInt(currentHealth)} HP";
-        }
+        if (winPanel != null) winPanel.SetActive(false);
     }
 }

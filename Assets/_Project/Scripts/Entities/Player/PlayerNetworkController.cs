@@ -98,7 +98,7 @@ public class PlayerNetworkController : NetworkBehaviour
 
             if (healthComponent != null)
             {
-                GameHUD.Instance.UpdateHealth(healthComponent.currentHealth.Value);
+                GameHUD.Instance.UpdateMyHealth(healthComponent.currentHealth.Value);
                 healthComponent.currentHealth.OnValueChanged += OnHealthChanged;
             }
             isUIConnected = true;
@@ -108,7 +108,7 @@ public class PlayerNetworkController : NetworkBehaviour
     {
         if (GameHUD.Instance != null)
         {
-            GameHUD.Instance.UpdateHealth(current);
+            GameHUD.Instance.UpdateMyHealth(current);
         }
     }
     public override void OnNetworkDespawn()
@@ -148,18 +148,28 @@ public class PlayerNetworkController : NetworkBehaviour
         if (!IsOwner) return;
         if (!isUIConnected) TryConnectToHUD();
 
-        // 1. HA CSAPDÁBAN VAGYUNK
-        if (isTrapped)
+        // 1. SZELLEM MÓD (Spectator)
+        if (isGhost)
         {
-            HandleTrapEscape();
-            return; // Nem mozoghatunk!
+            HandleInput(); // Fontos: Inputot olvasni kell!
+            MoveGhost();
+            return;
         }
 
-        // 2. HA SZELLEMEK VAGYUNK
-        if (isGhost) { MoveGhost(); return; }
+        // 2. MEDVECSAPDA
+        if (isTrapped) { HandleTrapEscape(); return; }
 
+        // 3. HUNTER RELEASE (Bújócska fázis)
+        // Ha Vadász vagyunk ÉS még tart a Release fázis -> NEM MOZOGHATUNK!
+        if (isHunter.Value && NetworkGameManager.Instance != null && NetworkGameManager.Instance.IsHunterRelease())
+        {
+            // UI üzenet mehetne ide: "WAIT FOR DEER TO HIDE..."
+            // Opcionális: Feketére állítani a képernyõt (Vakság)
+            return;
+        }
+
+        // 4. NORMÁL JÁTÉK
         HandleInput();
-
         if (isHunter.Value) { MoveHunter(); LookHunter(); }
         else { MoveDeer(); LookDeer(); }
     }
@@ -329,35 +339,28 @@ public class PlayerNetworkController : NetworkBehaviour
     }
     private void MoveGhost()
     {
-        // Szabad kamera forgás (mint a Hunter FPS nézete)
-        float mouseX = lookInput.x * mouseSensitivity * Time.deltaTime * 10f;
-        float mouseY = lookInput.y * mouseSensitivity * Time.deltaTime * 10f;
+        // [JAVÍTÁS] Driftelés ellen: Ha nincs input, nincs mozgás.
+        if (moveInput.magnitude < 0.1f && !Keyboard.current.spaceKey.isPressed && !Keyboard.current.leftCtrlKey.isPressed)
+        {
+            return;
+        }
 
-        // Forgatjuk a kamerát (itt nincs test, csak kamera)
-        transform.Rotate(Vector3.up * mouseX);
+        LookHunter(); // Forgás ugyanaz, mint FPS
 
-        // Függõleges forgás (Pitch)
-        // Megjegyzés: Itt a transform.Rotate-et használjuk a "repülõgép" érzéshez,
-        // vagy visszaállíthatjuk az FPS logikát.
-        // Egyszerûsítve: Használjuk a sceneCamera-t közvetlenül? Nem, a Netcode-ban a Mountokat forgatjuk.
+        float speed = 15f;
+        // Fontos: Transform.Translate-t használunk, ami lokális irányba mozgat
+        Vector3 moveDir = new Vector3(moveInput.x, 0, moveInput.y);
 
-        // Maradunk a LookHunter logikánál a forgásra, de a mozgás más:
-        LookHunter(); // Ez jó a forgásra
+        // Fel-le
+        if (Keyboard.current.spaceKey.isPressed) moveDir.y = 1;
+        if (Keyboard.current.leftCtrlKey.isPressed) moveDir.y = -1;
 
-        // Mozgás: Nincs CharacterController, sima Transform.Translate
-        float speed = 10f; // Gyors repülés
-        Vector3 move = transform.right * moveInput.x + transform.forward * moveInput.y;
-
-        // Fel-le mozgás (Space / Ctrl)
-        if (Keyboard.current.spaceKey.isPressed) move += Vector3.up;
-        if (Keyboard.current.leftCtrlKey.isPressed) move -= Vector3.up;
-
-        transform.position += move * speed * Time.deltaTime;
+        transform.Translate(moveDir * speed * Time.deltaTime);
     }
     [ServerRpc]
     private void ApplySprintCostServerRpc()
     {
-        if (isHunter.Value)
+        if (isHunter.Value && healthComponent.isDraining.Value)
         {
             healthComponent.ModifyHealth(-hunterSprintCost * Time.deltaTime);
         }
@@ -380,7 +383,6 @@ public class PlayerNetworkController : NetworkBehaviour
         // 3. UI frissítés (opcionális)
         // GameHUD.Instance.ShowSpectatorUI();
     }
-
     // [NEW] Hunter Pánik Mód (Amikor elfogy a Sanity)
     [ClientRpc]
     public void TransformToPanicModeClientRpc()
@@ -451,12 +453,44 @@ public class PlayerNetworkController : NetworkBehaviour
             Debug.Log("KISZABADULTÁL!");
         }
     }
-
     // [NEW] Kliens kéri: "Kiszabadultam!"
     [ServerRpc]
     private void RequestUntrapServerRpc()
     {
         // Kiszabadítjuk mindenkinél
         SetTrappedClientRpc(false);
+    }
+    [ClientRpc]
+    public void ResetPlayerStateClientRpc()
+    {
+        // 1. Változók reset
+        isGhost = false;
+        isTrapped = false;
+        isDashing = false;
+
+        var shooting = GetComponent<HunterShootingSystem>();
+        if (shooting != null) shooting.ResetShootingState();
+
+        // 2. Fizika visszakapcsolása
+        if (characterController != null) characterController.enabled = true;
+
+        // 3. Gravitáció visszaállítása (ha a Ghost mód elállította)
+        gravity = -9.81f;
+        walkSpeed = 5f; // Eredeti érték
+        sprintSpeed = 9f; // Eredeti érték
+
+        // 4. Modellek frissítése (Mindenki szarvas a Lobbyban, vagy saját magát látja)
+        // A 'ResetAllPlayersToLobbyState' már beállította az isHunter-t false-ra, 
+        // így az OnValueChanged le fog futni és frissíti a visualt.
+        // De biztosra mehetünk:
+        UpdateVisuals(false);
+
+        // 5. HUD Reset (Célkereszt eltüntetése)
+        if (IsOwner && GameHUD.Instance != null)
+        {
+            GameHUD.Instance.SetRoleUI(false); // False = Szarvas nézet (nincs célkereszt)
+        }
+
+        Debug.Log("[Player] Reset kész. Lobby állapot.");
     }
 }

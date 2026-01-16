@@ -16,21 +16,55 @@ public class HealthComponent : NetworkBehaviour
     [SerializeField] private AudioClip lowHealthSound;
     private float nextSoundTime = 0f;
 
+    public NetworkVariable<bool> isDraining = new NetworkVariable<bool>(false);
     public delegate void DeathEvent(ulong clientId, bool wasHunter, bool isInstaKill); // Bõvített event
     public event DeathEvent OnDeath;
 
     public override void OnNetworkSpawn()
     {
-        currentHealth.OnValueChanged += (oldVal, newVal) =>
-        {
-            // UI frissítéshez event (opcionális, de hasznos debug)
-            // Debug.Log($"[Health] {name} HP: {newVal}");
-        };
+        // Amikor változik az élet, értesítjük a UI-t
+        currentHealth.OnValueChanged += OnHealthChanged;
     }
+    private void OnHealthChanged(float oldVal, float newVal)
+    {
+        // 1. HA EZ A SAJÁT KARAKTEREM -> Frissítem a saját HUD-omat
+        if (IsOwner && GameHUD.Instance != null)
+        {
+            GameHUD.Instance.UpdateMyHealth(newVal);
+        }
 
+        // 2. HA EZ EGY HUNTER (Bárkié) -> Frissítem a Publikus Hunter UI-t mindenkinél
+        // Mivel az 'isHunter' csak a szerveren/ownernél biztos, nézzük meg máshogy:
+        // Vagy bízunk benne, hogy szinkronizálva van, vagy a PlayerController-t kérdezzük.
+
+        var player = GetComponent<PlayerNetworkController>();
+        if (player != null && player.isHunter.Value)
+        {
+            if (GameHUD.Instance != null)
+            {
+                GameHUD.Instance.UpdateHunterSanity(newVal);
+            }
+        }
+    }
     private void Update()
     {
         if (!IsServer) return;
+        if (isDraining.Value && currentHealth.Value > 0)
+        {
+            ModifyHealth(-decayRate * Time.deltaTime);
+        }
+        if (NetworkGameManager.Instance == null) return;
+
+        bool isGameRunning = NetworkGameManager.Instance.IsInGame();
+        bool isGameActive = NetworkGameManager.Instance.IsInGame(); // InGame vagy Panic
+        bool isReleasePhase = NetworkGameManager.Instance.IsHunterRelease(); // Release
+
+        Debug.Log($"Drain Check: GameState={NetworkGameManager.Instance.currentGameState.Value}, ShouldDrain={isGameRunning}");
+        
+        if (isGameActive && !isReleasePhase && currentHealth.Value > 0)
+        {
+            ModifyHealth(-decayRate * Time.deltaTime);
+        }
 
         // Folyamatos életvesztés (Sanity/Hunger)
         if (currentHealth.Value > 0)
@@ -48,7 +82,6 @@ public class HealthComponent : NetworkBehaviour
             }
         }
     }
-
     public void ModifyHealth(float amount)
     {
         if (!IsServer) return;
@@ -65,7 +98,6 @@ public class HealthComponent : NetworkBehaviour
             Die(false);
         }
     }
-
     public void TakeHit(float amount, bool isInstaKill = false)
     {
         if (!IsServer) return;
@@ -91,7 +123,6 @@ public class HealthComponent : NetworkBehaviour
             }
         }
     }
-
     private void Die(bool isInstaKill)
     {
         Debug.Log($"[Death] {name} meghalt. Hunter? {isHunter}. InstaKill? {isInstaKill}");
@@ -115,7 +146,6 @@ public class HealthComponent : NetworkBehaviour
             currentHealth.Value = 100f;
         }
     }
-
     [ClientRpc]
     private void PlayLowHealthSoundClientRpc()
     {

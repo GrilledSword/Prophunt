@@ -22,19 +22,25 @@ public class HunterShootingSystem : NetworkBehaviour
     private PlayerNetworkController playerController;
     private float nextFireTime = 0f;
     private Camera cam;
+    private bool canShoot = false;
 
     public override void OnNetworkSpawn()
     {
         playerController = GetComponent<PlayerNetworkController>();
     }
-
+    public void ResetShootingState()
+    {
+        canShoot = false; // Alapból nem lõhet (Lobby/Release)
+        this.enabled = true; // Visszakapcsoljuk a komponenst, ha Panic kikapcsolta
+    }
+    public void EnableShooting(bool enable)
+    {
+        canShoot = enable;
+    }
     private void Update()
     {
-        // Csak a saját karakterünk lõhet, és CSAK ha Hunter!
         if (!IsOwner) return;
-        if (!playerController.isHunter.Value) return;
-
-        // Fegyver kezelés
+        if (!playerController.isHunter.Value || !canShoot) return;
         if (Mouse.current.leftButton.isPressed && Time.time >= nextFireTime)
         {
             nextFireTime = Time.time + fireRate;

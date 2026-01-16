@@ -10,106 +10,144 @@ public class GameLoopManager : NetworkBehaviour
 
     [Header("Idõzítés")]
     [SerializeField] private float lobbyTime = 10f;
-    [SerializeField] private int minPlayersToStart = 2; // Ezt állítsd 1-re az Inspectorban a teszthez!
+    [SerializeField] private float hunterReleaseTime = 15f; // ÚJ: Mennyi ideig vak a vadász?
+    [SerializeField] private int minPlayersToStart = 2; // Teszthez állítsd 1-re Inspectorban!
 
-    [Header("Spawn Referenciák")]
-    [SerializeField] private Transform lobbySpawnPoint;
-    [SerializeField] private List<Transform> gameSpawnPoints;
+    [Header("Spawn Points (Tag-el keressük inkább!)")]
+    private Transform lobbySpawnPoint;
+    private List<Transform> gameSpawnPoints = new List<Transform>();
 
     [Header("UI")]
     [SerializeField] private TextMeshProUGUI timerText;
     [SerializeField] private GameObject lobbyUI;
 
     private NetworkVariable<float> currentTimer = new NetworkVariable<float>(0f);
-    private bool isTimerRunning = false;
-
-    // [NEW] Ez a változó a "Retesz". Ha igaz, akkor már nem lobbyzunk.
+    private bool isLobbyTimerRunning = false;
+    private bool isReleaseTimerRunning = false;
     private bool isMatchStarted = false;
+    private bool isSceneReloaded = false;
 
     private void Awake()
     {
+        if (Instance != null && Instance != this) Destroy(gameObject);
         Instance = this;
     }
-
     public override void OnNetworkSpawn()
     {
         if (IsServer)
         {
             NetworkManager.Singleton.SceneManager.OnLoadEventCompleted += OnSceneLoaded;
         }
-        currentTimer.OnValueChanged += UpdateTimerUI;
-    }
+        currentTimer.OnValueChanged += OnTimerChanged;
 
+        // [JAVÍTÁS] Ha betöltött a pálya (és létrejött ez a script), 
+        // azonnal reseteljük a UI-t LOKÁLISAN. Nem kell RPC!
+        if (GameHUD.Instance != null)
+        {
+            GameHUD.Instance.ResetWinScreen();
+        }
+        if (lobbyUI != null) lobbyUI.SetActive(true);
+        if (timerText != null) timerText.gameObject.SetActive(true); // Biztos látszódjon
+    }
     private void OnSceneLoaded(string sceneName, UnityEngine.SceneManagement.LoadSceneMode loadSceneMode, List<ulong> clientsCompleted, List<ulong> clientsTimedOut)
     {
         if (!IsServer) return;
-        foreach (ulong clientId in clientsCompleted)
-        {
-            TeleportPlayer(clientId, lobbySpawnPoint.position);
-        }
-    }
 
+        isMatchStarted = false;
+        isLobbyTimerRunning = false;
+        isReleaseTimerRunning = false;
+
+        // Spawn pontok keresése (Find)
+        GameObject lobbyObj = GameObject.Find("LobbySpawnPoint");
+        if (lobbyObj != null) lobbySpawnPoint = lobbyObj.transform;
+
+        gameSpawnPoints.Clear();
+        GameObject spawnsRoot = GameObject.Find("SpawnPoints");
+        if (spawnsRoot != null)
+        {
+            foreach (Transform child in spawnsRoot.transform) gameSpawnPoints.Add(child);
+        }
+
+        // Teleport
+        if (lobbySpawnPoint != null)
+        {
+            foreach (ulong clientId in clientsCompleted)
+            {
+                TeleportPlayer(clientId, lobbySpawnPoint.position);
+            }
+        }
+
+        // A NetworkGameManager ResetLobby-ja majd intézi a Player resetet
+    }
     private void Update()
     {
         if (!IsServer) return;
 
-        // [NEW] Ha a meccs már elindult, akkor a Lobby logika INAKTÍV.
-        // Így elkerüljük a végtelen újraindítást.
-        if (isMatchStarted) return;
-
-        int playerCount = NetworkManager.Singleton.ConnectedClientsList.Count;
-
-        if (playerCount >= minPlayersToStart && !isTimerRunning)
+        if (isSceneReloaded && IsSpawned)
         {
-            StartCountdown();
-        }
-        else if (playerCount < minPlayersToStart && isTimerRunning)
-        {
-            StopCountdown();
-        }
+            isSceneReloaded = false;
+            // Biztos, ami biztos: Mindenkinek reseteljük a UI-t (de csak ha már spawnoltunk!)
+            ResetUIClientRpc();
 
-        if (isTimerRunning)
+            // ÉS A LEGFONTOSABB:
+            // A NetworkGameManager állapotát is vissza kell állítani LOBBY-ra!
+            if (NetworkGameManager.Instance != null)
+            {
+                NetworkGameManager.Instance.currentGameState.Value = NetworkGameManager.GameState.Lobby;
+            }
+        }
+        // --- LOBBY FÁZIS ---
+        if (!isMatchStarted)
+        {
+            int playerCount = NetworkManager.Singleton.ConnectedClientsList.Count;
+            if (playerCount >= minPlayersToStart && !isLobbyTimerRunning)
+            {
+                isLobbyTimerRunning = true;
+                currentTimer.Value = lobbyTime;
+            }
+
+            if (isLobbyTimerRunning)
+            {
+                currentTimer.Value -= Time.deltaTime;
+                if (currentTimer.Value <= 0f)
+                {
+                    StartMatchSequence();
+                }
+            }
+        }
+        // --- HUNTER RELEASE FÁZIS (IN GAME ELEJE) ---
+        else if (isReleaseTimerRunning)
         {
             currentTimer.Value -= Time.deltaTime;
             if (currentTimer.Value <= 0f)
             {
-                StartMatch();
+                isReleaseTimerRunning = false;
+                // Vége a bújócskának
+                NetworkGameManager.Instance.SetHunterFree();
+                //ToggleTimerTextClientRpc(false); // Eltüntetjük az órát
             }
         }
     }
-
-    private void StartCountdown()
+    private void StartMatchSequence()
     {
-        isTimerRunning = true;
-        currentTimer.Value = lobbyTime;
-        Debug.Log("Visszaszámlálás indul!");
-    }
-
-    private void StopCountdown()
-    {
-        isTimerRunning = false;
-        currentTimer.Value = 0f;
-    }
-
-    private void StartMatch()
-    {
-        isTimerRunning = false;
-
-        // [NEW] Bekapcsoljuk a reteszt: A meccs elindult!
+        isLobbyTimerRunning = false;
         isMatchStarted = true;
-
-        Debug.Log("MECCS INDUL! Sorsolás és Teleport.");
 
         NetworkGameManager.Instance.StartGameServerRpc();
         DistributePlayersToSpawnPoints();
-        ToggleLobbyUIClientRpc(false);
-    }
 
+        ToggleLobbyUIClientRpc(false);
+
+        // Idõzítõ beállítása
+        isReleaseTimerRunning = true;
+        currentTimer.Value = hunterReleaseTime;
+
+        // [JAVÍTÁS] Kényszerítjük a megjelenést mindenkinél!
+        ShowTimerUIClientRpc();
+    }
     private void DistributePlayersToSpawnPoints()
     {
-        // [BIZTONSÁG] Ha nincs spawn pont, ne omoljon össze
         if (gameSpawnPoints.Count == 0) return;
-
         int deerSpawnIndex = Random.Range(0, gameSpawnPoints.Count);
         Vector3 deerBasePosition = gameSpawnPoints[deerSpawnIndex].position;
 
@@ -120,7 +158,6 @@ public class GameLoopManager : NetworkBehaviour
             if (playerScript == null) continue;
 
             Vector3 targetPos;
-
             if (!playerScript.isHunter.Value)
             {
                 Vector3 randomOffset = new Vector3(Random.Range(-2f, 2f), 0, Random.Range(-2f, 2f));
@@ -131,11 +168,9 @@ public class GameLoopManager : NetworkBehaviour
                 int hunterSpawnIndex = Random.Range(0, gameSpawnPoints.Count);
                 targetPos = gameSpawnPoints[hunterSpawnIndex].position;
             }
-
             TeleportPlayer(client.ClientId, targetPos);
         }
     }
-
     private void TeleportPlayer(ulong clientId, Vector3 position)
     {
         if (NetworkManager.Singleton.ConnectedClients.TryGetValue(clientId, out var client))
@@ -146,21 +181,68 @@ public class GameLoopManager : NetworkBehaviour
             if (characterController != null) characterController.enabled = true;
         }
     }
-
-    private void UpdateTimerUI(float previous, float current)
+    private void OnTimerChanged(float oldVal, float newVal)
     {
-        if (timerText != null)
+        if (GameHUD.Instance == null) return;
+
+        if (newVal > 0)
         {
-            if (current > 0)
-                timerText.text = $"START IN: {Mathf.CeilToInt(current)}";
-            else
-                timerText.text = ""; // Ha vége, üres legyen
+            string prefix = isMatchStarted ? "RELEASE: " : "START: ";
+            GameHUD.Instance.UpdateTimer($"{prefix}{Mathf.CeilToInt(newVal)}");
+        }
+        else
+        {
+            GameHUD.Instance.UpdateTimer(""); // Eltüntetjük
         }
     }
-
     [ClientRpc]
     private void ToggleLobbyUIClientRpc(bool isActive)
     {
         if (lobbyUI != null) lobbyUI.SetActive(isActive);
+    }
+    [ClientRpc]
+    private void ResetUIClientRpc()
+    {
+        if (GameHUD.Instance != null)
+        {
+            GameHUD.Instance.ResetWinScreen(); // Eltünteti a gyõzelmi feliratot
+        }
+        if (lobbyUI != null) lobbyUI.SetActive(true); // Lobby UI visszajön
+    }
+    private void UpdateTimerUI(float previous, float current)
+    {
+        if (timerText != null)
+        {
+            // Ha a TimerText inaktív lenne, kapcsoljuk be (kliens oldali biztositek)
+            if (!timerText.gameObject.activeInHierarchy && current > 0)
+            {
+                timerText.gameObject.SetActive(true);
+            }
+
+            if (current > 0)
+            {
+                // Ha MatchStarted van, de még ReleaseTimer fut -> RELEASE
+                // Ha nem MatchStarted -> START
+                string prefix = isMatchStarted ? "RELEASE: " : "START: ";
+                timerText.text = $"{prefix}{Mathf.CeilToInt(current)}";
+
+                // Extra színkód: Release alatt legyen PIROS a szöveg
+                if (isMatchStarted) timerText.color = Color.red;
+                else timerText.color = Color.white;
+            }
+            else
+            {
+                timerText.text = "";
+            }
+        }
+    }
+    [ClientRpc]
+    private void ShowTimerUIClientRpc()
+    {
+        if (timerText != null)
+        {
+            timerText.gameObject.SetActive(true);
+            timerText.text = "PREPARE TO HIDE!"; // Kezdõ szöveg amíg a timer szinkronizál
+        }
     }
 }

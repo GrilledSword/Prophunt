@@ -16,14 +16,16 @@ public class SafeZone : NetworkBehaviour
     {
         if (!IsServer) return;
 
-        // Ha a "Megõrült Vadász" lép be
-        if (other.TryGetComponent(out PlayerNetworkController player))
+        // Csak akkor mûködik, ha Pánik van!
+        if (!NetworkGameManager.Instance.IsHunterPanic()) return;
+
+        // Megkeressük a komponenst (Parentben is, ha a lábát dugja be)
+        var player = other.GetComponentInParent<PlayerNetworkController>();
+
+        if (player != null && player.isHunter.Value)
         {
-            if (player.isHunter.Value && NetworkGameManager.Instance.IsHunterInPanic())
-            {
-                // A Vadász túlélte!
-                NetworkGameManager.Instance.EndGameServerRpc(true); // True = Hunter Won (Survived)
-            }
+            Debug.Log("VADÁSZ BEÉRT A HÁZBA! GYÕZELEM!");
+            NetworkGameManager.Instance.EndGameServerRpc(true); // Hunter Won
         }
     }
 }
