@@ -8,7 +8,7 @@ public class NetworkGameManager : NetworkBehaviour
 {
     public static NetworkGameManager Instance { get; private set; }
 
-    public enum GameState { Lobby, HunterRelease, InGame, HunterPanic, GameOver }
+    public enum GameState { Lobby, HunterRelease, InGame, HunterPanic, GameOver, MatchOver }
     public NetworkVariable<GameState> currentGameState = new NetworkVariable<GameState>(GameState.Lobby);
     
     public NetworkVariable<bool> areTrapsActive = new NetworkVariable<bool>(false);
@@ -20,6 +20,10 @@ public class NetworkGameManager : NetworkBehaviour
     [SerializeField] private int chanceMines = 15;
     [Tooltip("Csapdás kör esélye")]
     [SerializeField] private int chanceTraps = 15;
+
+    public NetworkVariable<int> hunterWins = new NetworkVariable<int>(0);
+    public NetworkVariable<int> deerWins = new NetworkVariable<int>(0);
+    public NetworkVariable<int> targetWins = new NetworkVariable<int>(3);
 
     public enum RoundType { Normal, Mines, Traps }
     public NetworkVariable<RoundType> currentRoundType = new NetworkVariable<RoundType>(RoundType.Normal);
@@ -41,7 +45,6 @@ public class NetworkGameManager : NetworkBehaviour
     public void StartGameServerRpc()
     {
         if (!IsServer) return;
-
         currentGameState.Value = GameState.HunterRelease;
         SetGlobalDrain(false);
         areTrapsActive.Value = false;
@@ -81,7 +84,6 @@ public class NetworkGameManager : NetworkBehaviour
             var health = player.Value.GetComponent<HealthComponent>();
             if (health != null) health.isHunter = isHunter;
         }
-
         StartCoroutine(HunterReleaseRoutine());
     }
     private IEnumerator HunterReleaseRoutine()
@@ -128,10 +130,38 @@ public class NetworkGameManager : NetworkBehaviour
     [ServerRpc]
     public void EndGameServerRpc(bool hunterWon)
     {
-        currentGameState.Value = GameState.GameOver;
-        ShowWinUIClientRpc(hunterWon ? "VADÁSZ NYERT!" : "SZARVASOK NYERTEK!");
+        // 1. Pontszám növelés
+        if (hunterWon) hunterWins.Value++;
+        else deerWins.Value++;
 
-        StartCoroutine(RestartGameRoutine());
+        if (GameSessionSettings.Instance != null)
+        {
+            GameSessionSettings.Instance.CurrentHunterScore = hunterWins.Value;
+            GameSessionSettings.Instance.CurrentDeerScore = deerWins.Value;
+        }
+
+        // 2. Ellenõrizzük, vége-e a TELJES MECCSNEK?
+        if (hunterWins.Value >= targetWins.Value || deerWins.Value >= targetWins.Value)
+        {
+            currentGameState.Value = GameState.MatchOver;
+
+            // Meccs vége -> Reseteljük a mentett pontokat 0-ra, 
+            // hogy ha visszalépnek a menübe vagy új meccset indítanak, tiszta lap legyen.
+            if (GameSessionSettings.Instance != null)
+            {
+                GameSessionSettings.Instance.ResetScores();
+            }
+
+            string winner = hunterWon ? "VADÁSZ" : "SZARVASOK";
+            ShowMatchOverUIClientRpc(winner);
+        }
+        else
+        {
+            // Sima kör vége
+            currentGameState.Value = GameState.GameOver;
+            ShowWinUIClientRpc(hunterWon ? "KÖR NYERTESE: VADÁSZ" : "KÖR NYERTESE: SZARVASOK");
+            StartCoroutine(RestartGameRoutine());
+        }
     }
     [ClientRpc]
     private void ShowWinUIClientRpc(string winnerText)
@@ -173,8 +203,42 @@ public class NetworkGameManager : NetworkBehaviour
 
             ResetAllPlayersToLobbyState();
         }
+        if (IsServer)
+        {
+            // [JAVÍTÁS] Visszatöltjük a pontokat a memóriából!
+            if (GameSessionSettings.Instance != null)
+            {
+                targetWins.Value = GameSessionSettings.Instance.TargetWins;
+
+                // Itt állítjuk be a NetworkVariable-t a mentett értékre
+                hunterWins.Value = GameSessionSettings.Instance.CurrentHunterScore;
+                deerWins.Value = GameSessionSettings.Instance.CurrentDeerScore;
+            }
+
+            currentGameState.Value = GameState.Lobby;
+            areTrapsActive.Value = false;
+            currentRoundType.Value = RoundType.Normal;
+
+            allSafeZones = FindObjectsOfType<SafeZone>().ToList();
+            foreach (var zone in allSafeZones) zone.SetActive(false);
+
+            ResetAllPlayersToLobbyState();
+        }
+        hunterWins.OnValueChanged += OnScoreChanged;
+        deerWins.OnValueChanged += OnScoreChanged;
+
+        // Azonnali UI frissítés, hogy lássuk a hozott pontokat
+        if (GameHUD.Instance != null)
+            GameHUD.Instance.UpdateScores(hunterWins.Value, deerWins.Value, targetWins.Value);
 
         NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnected;
+    }
+    private void OnScoreChanged(int oldVal, int newVal)
+    {
+        if (GameHUD.Instance != null)
+        {
+            GameHUD.Instance.UpdateScores(hunterWins.Value, deerWins.Value, targetWins.Value);
+        }
     }
     public override void OnNetworkDespawn()
     {
@@ -223,10 +287,7 @@ public class NetworkGameManager : NetworkBehaviour
     {
         SetGlobalDrain(false);
         areTrapsActive.Value = false;
-
-        // [ÚJ] Pálya takarítás restartkor is
         if (LevelGenerator.Instance != null) LevelGenerator.Instance.ClearLevel();
-
         foreach (var player in connectedPlayers.Values)
         {
             player.isHunter.Value = false;
@@ -262,7 +323,6 @@ public class NetworkGameManager : NetworkBehaviour
 
         if (!string.IsNullOrEmpty(msg))
         {
-            Debug.Log($"[Server] Csapda üzenet küldése: {msg}");
             ShowTrapNotificationClientRpc(msg);
         }
     }
@@ -282,4 +342,43 @@ public class NetworkGameManager : NetworkBehaviour
             GameHUD.Instance.ShowNotification(msg);
         }
     }
+    [ClientRpc]
+    private void ShowMatchOverUIClientRpc(string winnerTeam)
+    {
+        if (GameHUD.Instance != null)
+        {
+            // Csak a HOST lássa a gombokat, a többiek csak a feliratot
+            bool isHost = IsServer;
+            GameHUD.Instance.ShowMatchOverScreen(winnerTeam, isHost);
+        }
+    }
+    public void LoadNextMap()
+    {
+        if (!IsServer) return;
+
+        string nextSceneName = "";
+
+        // Ha Random be volt pipálva, vagy "Váltás" a cél -> Sorsolunk újat
+        if (GameSessionSettings.Instance != null)
+        {
+            // Sorsolunk egy pályát (lehetõleg ne a mostanit)
+            string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+            int attempts = 0;
+            do
+            {
+                nextSceneName = GameSessionSettings.Instance.GetRandomMap();
+                attempts++;
+            } while (nextSceneName == currentScene && attempts < 5 && GameSessionSettings.Instance.availableMaps.Count > 1);
+        }
+        else
+        {
+            // Ha nem random, akkor is váltsunk? A kérés: "ha folytatás akkor váltson map-t".
+            // Akkor is sorsoljunk egyet a listából.
+            nextSceneName = GameSessionSettings.Instance.GetRandomMap();
+        }
+
+        Debug.Log($"[MatchOver] Loading next map: {nextSceneName}");
+        NetworkManager.Singleton.SceneManager.LoadScene(nextSceneName, UnityEngine.SceneManagement.LoadSceneMode.Single);
+    }
+
 }

@@ -21,6 +21,10 @@ public class LevelGenerator : NetworkBehaviour
     [SerializeField] private GameObject bearTrapPrefab;
     [SerializeField] private int bearTrapCount = 5;
 
+    [Header("NPC Beállítások")]
+    [SerializeField] private GameObject deerNpcPrefab;
+    [SerializeField] private int npcCount = 25;
+
     private List<NetworkObject> spawnedObjects = new List<NetworkObject>();
 
     private void Awake()
@@ -34,6 +38,10 @@ public class LevelGenerator : NetworkBehaviour
 
         ClearLevel();
         SpawnObjects(foodPrefab, foodCount);
+        if (deerNpcPrefab != null)
+        {
+            SpawnObjects(deerNpcPrefab, npcCount);
+        }
 
         switch (roundType)
         {
@@ -79,6 +87,13 @@ public class LevelGenerator : NetworkBehaviour
         {
             if (food.GetComponent<NetworkObject>().IsSpawned)
                 food.GetComponent<NetworkObject>().Despawn();
+        }
+
+        DeerAIController[] npcs = FindObjectsOfType<DeerAIController>();
+        foreach (var npc in npcs)
+        {
+            if (npc.GetComponent<NetworkObject>().IsSpawned)
+                npc.GetComponent<NetworkObject>().Despawn();
         }
     }
 

@@ -8,24 +8,25 @@ public class GameLoopManager : NetworkBehaviour
 {
     public static GameLoopManager Instance { get; private set; }
 
+    // [ÚJ] Loading Állapotok
+    public enum LoadingState { WaitingForConnection, LoadingScene, InitializingMap, Ready }
+    private LoadingState currentLoadingState = LoadingState.WaitingForConnection;
+
     [Header("Idõzítés")]
     [SerializeField] private float lobbyTime = 10f;
     [SerializeField] private float hunterReleaseTime = 15f;
-    [SerializeField] private int minPlayersToStart = 2;
+    [SerializeField] private int minPlayersToStart = 1;
 
     [Header("UI")]
     [SerializeField] private GameObject lobbyUI;
-
-    private Transform lobbySpawnPoint;
-    private Transform deerSpawnPoint;
-    private Transform hunterCabinSpawnPoint;
-    private Transform hunterReleaseSpawnPoint;
+    [SerializeField] private GameObject loadingScreenPanel; // [ÚJ] Loading Screen
 
     private NetworkVariable<float> currentTimer = new NetworkVariable<float>(0f);
     private bool isLobbyTimerRunning = false;
     private bool isReleaseTimerRunning = false;
     private bool isMatchStarted = false;
 
+    // Restart flag
     private bool isSceneReloaded = false;
 
     private void Awake()
@@ -37,46 +38,74 @@ public class GameLoopManager : NetworkBehaviour
     {
         if (IsServer)
         {
+            // Beállítások átvétele
+            if (GameSessionSettings.Instance != null)
+            {
+                minPlayersToStart = GameSessionSettings.Instance.MinPlayersToStart;
+            }
+
             NetworkManager.Singleton.SceneManager.OnLoadEventCompleted += OnSceneLoaded;
+
+            // Start Loading Sequence
+            currentLoadingState = LoadingState.LoadingScene;
         }
+
         currentTimer.OnValueChanged += OnTimerChanged;
 
-        if (GameHUD.Instance != null) GameHUD.Instance.ResetWinScreen();
-        if (lobbyUI != null) lobbyUI.SetActive(true);
+        // Klienseknél is bekapcsoljuk a Loading Screen-t amíg nem kapnak más utasítást
+        if (loadingScreenPanel != null) loadingScreenPanel.SetActive(true);
     }
     private void OnSceneLoaded(string sceneName, UnityEngine.SceneManagement.LoadSceneMode loadSceneMode, List<ulong> clientsCompleted, List<ulong> clientsTimedOut)
     {
         if (!IsServer) return;
 
-        isMatchStarted = false;
-        isLobbyTimerRunning = false;
-        isReleaseTimerRunning = false;
-
-        // [ÚJ] Megkeressük a 4 pontot név alapján
-        GameObject lobbyObj = GameObject.Find("LobbySpawnPoint");
-        if (lobbyObj) lobbySpawnPoint = lobbyObj.transform;
-
-        GameObject deerObj = GameObject.Find("DeerSpawnPoint");
-        if (deerObj) deerSpawnPoint = deerObj.transform;
-
-        GameObject cabinObj = GameObject.Find("HunterCabinSpawnPoint");
-        if (cabinObj) hunterCabinSpawnPoint = cabinObj.transform;
-
-        GameObject releaseObj = GameObject.Find("HunterReleaseSpawnPoint");
-        if (releaseObj) hunterReleaseSpawnPoint = releaseObj.transform;
-
-        // Mindenki Lobby
-        if (lobbySpawnPoint != null)
-        {
-            foreach (ulong clientId in clientsCompleted)
-            {
-                TeleportPlayer(clientId, lobbySpawnPoint.position);
-            }
-        }
-
+        // Ez a callback minden kliens betöltésekor lefut, de nekünk elég ha tudjuk, hogy a folyamat zajlik.
+        // A valódi inicializálást az Update-ben a State Machine végzi.
         isSceneReloaded = true;
     }
     private void Update()
+    {
+        if (!IsServer) return;
+
+        // --- LOADING STATE MACHINE ---
+        switch (currentLoadingState)
+        {
+            case LoadingState.WaitingForConnection:
+                // Várunk, amíg a NetworkManager elindul (ez már OnNetworkSpawn-nál megtörtént)
+                break;
+
+            case LoadingState.LoadingScene:
+                // Várunk, amíg a MapSettings elérhetõ lesz (betöltött a scene)
+                if (MapSettings.Instance != null)
+                {
+                    Debug.Log("[GameLoop] Pálya betöltve. Inicializálás...");
+                    currentLoadingState = LoadingState.InitializingMap;
+                }
+                break;
+
+            case LoadingState.InitializingMap:
+                // Most már biztosan megvan minden pont, teleportálhatunk
+                TeleportAllToLobby();
+
+                // Reseteljük a játékállapotot
+                if (NetworkGameManager.Instance != null)
+                    NetworkGameManager.Instance.currentGameState.Value = NetworkGameManager.GameState.Lobby;
+
+                // UI Reset mindenkinél
+                ResetUIClientRpc();
+                HideLoadingScreenClientRpc(); // [FONTOS] Itt tûnik el a loading screen!
+
+                Debug.Log("[GameLoop] Inicializálás kész. Várakozás játékosokra...");
+                currentLoadingState = LoadingState.Ready;
+                break;
+
+            case LoadingState.Ready:
+                // Mehet a normál játékmenet (Timer, stb.)
+                HandleGameLoop();
+                break;
+        }
+    }
+    private void HandleGameLoop()
     {
         if (!IsServer) return;
 
@@ -111,12 +140,18 @@ public class GameLoopManager : NetworkBehaviour
             if (currentTimer.Value <= 0f)
             {
                 isReleaseTimerRunning = false;
-
-                // [ÚJ] Vadász teleportálása a szabadba!
                 MoveHunterToOutside();
-
                 NetworkGameManager.Instance.SetHunterFree();
             }
+        }
+    }
+    private void TeleportAllToLobby()
+    {
+        if (MapSettings.Instance == null || MapSettings.Instance.LobbySpawnPoint == null) return;
+
+        foreach (var client in NetworkManager.Singleton.ConnectedClientsList)
+        {
+            TeleportPlayer(client.ClientId, MapSettings.Instance.LobbySpawnPoint.position);
         }
     }
     private void StartMatchSequence()
@@ -125,7 +160,7 @@ public class GameLoopManager : NetworkBehaviour
         isMatchStarted = true;
 
         NetworkGameManager.Instance.StartGameServerRpc();
-        DistributePlayersToSpawnPoints(); // Mindenki a helyére (Szarvas->Erdõ, Vadász->Kunyhó)
+        DistributePlayersToSpawnPoints();
         ToggleLobbyUIClientRpc(false);
 
         isReleaseTimerRunning = true;
@@ -133,29 +168,29 @@ public class GameLoopManager : NetworkBehaviour
     }
     private void DistributePlayersToSpawnPoints()
     {
+        // Ha valamiért nincs MapSettings (lehetetlen, de biztos ami biztos)
+        if (MapSettings.Instance == null) return;
+
         foreach (var client in NetworkManager.Singleton.ConnectedClientsList)
         {
             if (client.PlayerObject == null) continue;
             var playerScript = client.PlayerObject.GetComponent<PlayerNetworkController>();
             if (playerScript == null) continue;
 
-            Vector3 targetPos;
+            Vector3 targetPos = Vector3.zero;
 
             if (playerScript.isHunter.Value)
             {
-                // Vadász -> Kunyhó (Cabin)
-                if (hunterCabinSpawnPoint != null) targetPos = hunterCabinSpawnPoint.position;
-                else targetPos = Vector3.zero;
+                if (MapSettings.Instance.HunterCabinSpawnPoint != null)
+                    targetPos = MapSettings.Instance.HunterCabinSpawnPoint.position;
             }
             else
             {
-                // Szarvas -> Erdõ (DeerSpawnPoint + kis szórás, hogy ne egymásban legyenek)
-                if (deerSpawnPoint != null)
+                if (MapSettings.Instance.DeerSpawnPoint != null)
                 {
                     Vector3 randomOffset = new Vector3(Random.Range(-3f, 3f), 0, Random.Range(-3f, 3f));
-                    targetPos = deerSpawnPoint.position + randomOffset;
+                    targetPos = MapSettings.Instance.DeerSpawnPoint.position + randomOffset;
                 }
-                else targetPos = Vector3.zero;
             }
 
             TeleportPlayer(client.ClientId, targetPos);
@@ -176,25 +211,40 @@ public class GameLoopManager : NetworkBehaviour
         if (GameHUD.Instance == null) return;
         if (newVal > 0)
         {
-            string prefix = isMatchStarted ? "RELEASE: " : "START: ";
-            GameHUD.Instance.UpdateTimer($"{prefix}{Mathf.CeilToInt(newVal)}");
+            bool isReleasePhase = false;
+            if (NetworkGameManager.Instance != null)
+                isReleasePhase = NetworkGameManager.Instance.currentGameState.Value == NetworkGameManager.GameState.HunterRelease;
+
+            string prefix = isReleasePhase ? "RELEASE: " : "START: ";
+            string colorHex = isReleasePhase ? "<color=red>" : "<color=white>";
+            GameHUD.Instance.UpdateTimer($"{colorHex}{prefix}{Mathf.CeilToInt(newVal)}</color>");
         }
         else GameHUD.Instance.UpdateTimer("");
     }
     private void MoveHunterToOutside()
     {
-        if (hunterReleaseSpawnPoint == null) return;
+        if (MapSettings.Instance == null || MapSettings.Instance.HunterReleaseSpawnPoint == null) return;
 
         foreach (var client in NetworkManager.Singleton.ConnectedClientsList)
         {
             var playerScript = client.PlayerObject.GetComponent<PlayerNetworkController>();
             if (playerScript != null && playerScript.isHunter.Value)
             {
-                TeleportPlayer(client.ClientId, hunterReleaseSpawnPoint.position);
-                Debug.Log("[GameLoop] Vadász kiengedve a szabadba!");
+                TeleportPlayer(client.ClientId, MapSettings.Instance.HunterReleaseSpawnPoint.position);
             }
         }
     }
     [ClientRpc] private void ToggleLobbyUIClientRpc(bool isActive) { if (lobbyUI != null) lobbyUI.SetActive(isActive); }
-    [ClientRpc] private void ResetUIClientRpc() { if (GameHUD.Instance != null) GameHUD.Instance.ResetWinScreen(); if (lobbyUI != null) lobbyUI.SetActive(true); }
+
+    [ClientRpc]
+    private void ResetUIClientRpc()
+    {
+        if (GameHUD.Instance != null) GameHUD.Instance.ResetWinScreen();
+        if (lobbyUI != null) lobbyUI.SetActive(true);
+    }
+    [ClientRpc]
+    private void HideLoadingScreenClientRpc()
+    {
+        if (loadingScreenPanel != null) loadingScreenPanel.SetActive(false);
+    }
 }

@@ -46,8 +46,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
-  GlobalObjectIdHash: 3988875371
-  InScenePlacedSourceGlobalObjectIdHash: 0
+  GlobalObjectIdHash: 3273065114
+  InScenePlacedSourceGlobalObjectIdHash: 2614041543
   DeferredDespawnTick: 0
   Ownership: 1
   AlwaysReplicateAsRoot: 0
@@ -82,6 +82,8 @@ MonoBehaviour:
   landmineCount: 5
   bearTrapPrefab: {fileID: 3018292980942548826, guid: 08574c8cc7a2b624f9463c0a7c3d7449, type: 3}
   bearTrapCount: 5
+  deerNpcPrefab: {fileID: 6720870931092001383, guid: 650d7e3638b619841abc28a074a8af13, type: 3}
+  npcCount: 25
 --- !u!65 &5956122488994146466
 BoxCollider:
   m_ObjectHideFlags: 0

@@ -153,10 +153,6 @@ public class PlayerNetworkController : NetworkBehaviour
         }
         if (isTrapped) { HandleTrapEscape(); return; }
 
-        if (isHunter.Value && NetworkGameManager.Instance != null && NetworkGameManager.Instance.IsHunterRelease())
-        {
-            return;
-        }
         HandleInteractionInput();
         HandleInput();
         if (isHunter.Value) { MoveHunter(); LookHunter(); }

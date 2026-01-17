@@ -63,12 +63,10 @@ public class HunterShootingSystem : NetworkBehaviour
 
             if (targetNetObj != null)
             {
-                Debug.Log($"Célpont azonosítva: {targetNetObj.name} (ID: {targetNetObj.NetworkObjectId})");
                 ShootServerRpc(targetNetObj.NetworkObjectId);
             }
             else
             {
-                Debug.LogWarning("Találat van, de nincs rajta (vagy a szülõjén) NetworkObject!");
             }
         }
     }
@@ -87,7 +85,7 @@ public class HunterShootingSystem : NetworkBehaviour
                 }
                 myHealth.ModifyHealth(playerHitReward);
             }
-            else if (targetObj.GetComponent<Npc>() != null)
+            else if (targetObj.GetComponent<DeerAIController>() != null)
             {
                 targetObj.Despawn(true);
                 myHealth.ModifyHealth(-npcHitPenalty);
