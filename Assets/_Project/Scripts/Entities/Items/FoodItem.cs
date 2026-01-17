@@ -7,23 +7,39 @@ public class FoodItem : NetworkBehaviour
 
     private void OnTriggerEnter(Collider other)
     {
-        if (!IsServer) return;
-
-        // Csak Játékos veheti fel
         if (other.TryGetComponent(out PlayerNetworkController player))
         {
-            // Csak SZARVAS veheti fel
-            if (!player.isHunter.Value)
+            if (player.IsOwner)
             {
-                // Gyógyítás
-                if (other.TryGetComponent(out HealthComponent health))
+                if (!player.isHunter.Value)
                 {
-                    health.ModifyHealth(healAmount);
-
-                    // Kaja eltûnik
-                    GetComponent<NetworkObject>().Despawn();
+                    player.SetNearbyFood(this);
                 }
             }
+        }
+    }
+    private void OnTriggerExit(Collider other)
+    {
+        if (other.TryGetComponent(out PlayerNetworkController player))
+        {
+            if (player.IsOwner && !player.isHunter.Value)
+            {
+                player.SetNearbyFood(null);
+            }
+        }
+    }
+    public void Eat(HealthComponent health)
+    {
+        if (!IsServer) return;
+
+        if (health != null)
+        {
+            health.ModifyHealth(healAmount);
+        }
+
+        if (IsSpawned)
+        {
+            GetComponent<NetworkObject>().Despawn();
         }
     }
 }

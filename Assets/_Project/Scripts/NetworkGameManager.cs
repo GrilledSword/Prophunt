@@ -10,6 +10,19 @@ public class NetworkGameManager : NetworkBehaviour
 
     public enum GameState { Lobby, HunterRelease, InGame, HunterPanic, GameOver }
     public NetworkVariable<GameState> currentGameState = new NetworkVariable<GameState>(GameState.Lobby);
+    
+    public NetworkVariable<bool> areTrapsActive = new NetworkVariable<bool>(false);
+
+    [Header("Kör Esélyek (0-100%)")]
+    [Tooltip("Sima kör esélye (csak kaja)")]
+    [SerializeField] private int chanceNormal = 70;
+    [Tooltip("Aknás kör esélye")]
+    [SerializeField] private int chanceMines = 15;
+    [Tooltip("Csapdás kör esélye")]
+    [SerializeField] private int chanceTraps = 15;
+
+    public enum RoundType { Normal, Mines, Traps }
+    public NetworkVariable<RoundType> currentRoundType = new NetworkVariable<RoundType>(RoundType.Normal);
 
     private Dictionary<ulong, PlayerNetworkController> connectedPlayers = new Dictionary<ulong, PlayerNetworkController>();
     private List<SafeZone> allSafeZones = new List<SafeZone>();
@@ -23,12 +36,40 @@ public class NetworkGameManager : NetworkBehaviour
     {
         if (!connectedPlayers.ContainsKey(clientId)) connectedPlayers.Add(clientId, playerScript);
     }
+
     [ServerRpc(RequireOwnership = false)]
     public void StartGameServerRpc()
     {
         if (!IsServer) return;
+
         currentGameState.Value = GameState.HunterRelease;
-        SetGlobalDrain(false); // Release alatt MÉG NEM fogy!
+        SetGlobalDrain(false);
+        areTrapsActive.Value = false;
+
+        // [ÚJ] KONFIGURÁLHATÓ SORSOLÁS
+        int totalWeight = chanceNormal + chanceMines + chanceTraps;
+        int randomVal = Random.Range(0, totalWeight); // 0 és Összeg között
+
+        if (randomVal < chanceNormal)
+        {
+            currentRoundType.Value = RoundType.Normal;
+        }
+        else if (randomVal < chanceNormal + chanceMines)
+        {
+            currentRoundType.Value = RoundType.Mines;
+        }
+        else
+        {
+            currentRoundType.Value = RoundType.Traps;
+        }
+
+        // Pálya generálás
+        if (LevelGenerator.Instance != null)
+        {
+            LevelGenerator.Instance.GenerateLevel(currentRoundType.Value);
+        }
+
+        // Szerepek
         List<ulong> clientIds = connectedPlayers.Keys.ToList();
         if (clientIds.Count == 0) return;
         ulong hunterId = clientIds[Random.Range(0, clientIds.Count)];
@@ -38,56 +79,40 @@ public class NetworkGameManager : NetworkBehaviour
             bool isHunter = (player.Key == hunterId);
             player.Value.isHunter.Value = isHunter;
             var health = player.Value.GetComponent<HealthComponent>();
-            if (health != null) health.isHunter = isHunter; // Biztos ami biztos
+            if (health != null) health.isHunter = isHunter;
         }
+
         StartCoroutine(HunterReleaseRoutine());
     }
     private IEnumerator HunterReleaseRoutine()
     {
         yield return new WaitForSeconds(15f);
         currentGameState.Value = GameState.InGame;
-        Debug.Log("VADÁSZ SZABADON! (IN GAME)");
-        // Itt jöhetne egy hang: "Ready or not, here I come!"
     }
     public void OnPlayerDied(ulong victimId, bool wasHunter, bool isInstaKill)
     {
         if (!IsServer) return;
-
         if (wasHunter)
         {
-            if (isInstaKill)
-            {
-                EndGameServerRpc(false); // Vadász meghalt -> Deer Win
-            }
-            else
-            {
-                TriggerHunterPanicMode(victimId);
-            }
+            if (isInstaKill) EndGameServerRpc(false);
+            else TriggerHunterPanicMode(victimId);
         }
         else
         {
-            if (connectedPlayers.TryGetValue(victimId, out var playerScript))
-            {
-                playerScript.SetGhostModeClientRpc();
-            }
+            if (connectedPlayers.TryGetValue(victimId, out var playerScript)) playerScript.SetGhostModeClientRpc();
             CheckDeerWinCondition();
         }
     }
     private void TriggerHunterPanicMode(ulong hunterId)
     {
         currentGameState.Value = GameState.HunterPanic;
-
         if (connectedPlayers.TryGetValue(hunterId, out var hunterScript))
         {
             hunterScript.TransformToPanicModeClientRpc();
-
             if (allSafeZones.Count > 0)
             {
                 var sortedZones = allSafeZones.OrderByDescending(z => Vector3.Distance(z.transform.position, hunterScript.transform.position)).ToList();
-                SafeZone selectedZone = sortedZones[0];
-
-                selectedZone.SetActive(true);
-                Debug.Log($"[PANIC] SafeZone aktiválva: {selectedZone.name}");
+                sortedZones[0].SetActive(true);
             }
         }
     }
@@ -104,11 +129,8 @@ public class NetworkGameManager : NetworkBehaviour
     public void EndGameServerRpc(bool hunterWon)
     {
         currentGameState.Value = GameState.GameOver;
-
-        // UI Megjelenítése mindenkinél
         ShowWinUIClientRpc(hunterWon ? "VADÁSZ NYERT!" : "SZARVASOK NYERTEK!");
 
-        // Újraindítás késleltetve
         StartCoroutine(RestartGameRoutine());
     }
     [ClientRpc]
@@ -121,9 +143,7 @@ public class NetworkGameManager : NetworkBehaviour
     }
     private IEnumerator RestartGameRoutine()
     {
-        yield return new WaitForSeconds(5f); // 5 mp ünneplés
-
-        // Pálya újratöltése (Ez visszaviszi a játékosokat a Lobby állapotba a scriptjeik szerint)
+        yield return new WaitForSeconds(5f);
         NetworkManager.Singleton.SceneManager.LoadScene("GameScene", UnityEngine.SceneManagement.LoadSceneMode.Single);
     }
     public override void OnNetworkSpawn()
@@ -145,12 +165,12 @@ public class NetworkGameManager : NetworkBehaviour
         if (IsServer)
         {
             currentGameState.Value = GameState.Lobby;
+            areTrapsActive.Value = false;
+            currentRoundType.Value = RoundType.Normal;
 
-            // Safe Zone-ok kikapcsolása
             allSafeZones = FindObjectsOfType<SafeZone>().ToList();
             foreach (var zone in allSafeZones) zone.SetActive(false);
 
-            // Mindenki szerepének törlése (Legyen mindenki Szarvas a Lobbyban)
             ResetAllPlayersToLobbyState();
         }
 
@@ -183,12 +203,12 @@ public class NetworkGameManager : NetworkBehaviour
     {
         if (!IsServer) return;
         currentGameState.Value = GameState.InGame;
-        SetGlobalDrain(true); // MOST INDUL A FOGYÁS!
-
-        // [ÚJ] Engedélyezzük a lövést minden vadásznak
+        SetGlobalDrain(true);
         EnableHuntersShootingClientRpc(true);
-
-        Debug.Log("VADÁSZ SZABADON! MEHET A MENET!");
+        if (currentRoundType.Value != RoundType.Normal)
+        {
+            StartCoroutine(ArmTrapsRoutine());
+        }
     }
     private void SetGlobalDrain(bool enabled)
     {
@@ -201,31 +221,65 @@ public class NetworkGameManager : NetworkBehaviour
     public bool IsHunterPanic() => currentGameState.Value == GameState.HunterPanic;
     private void ResetAllPlayersToLobbyState()
     {
-        // [FONTOS] Globális fogyás kikapcsolása!
         SetGlobalDrain(false);
+        areTrapsActive.Value = false;
+
+        // [ÚJ] Pálya takarítás restartkor is
+        if (LevelGenerator.Instance != null) LevelGenerator.Instance.ClearLevel();
 
         foreach (var player in connectedPlayers.Values)
         {
             player.isHunter.Value = false;
-
             var health = player.GetComponent<HealthComponent>();
             if (health != null)
             {
                 health.isHunter = false;
                 health.currentHealth.Value = 100f;
-                health.isDraining.Value = false; // [FONTOS] Egyéni szinten is stop
+                health.isDraining.Value = false;
             }
-
             player.ResetPlayerStateClientRpc();
+        }
+    }
+    private IEnumerator ArmTrapsRoutine()
+    {
+        yield return new WaitForSeconds(3f); // 3 mp késleltetés
+
+        areTrapsActive.Value = true;
+
+        // [JAVÍTÁS] Pontos üzenet meghatározása
+        string msg = "";
+
+        switch (currentRoundType.Value)
+        {
+            case RoundType.Mines:
+                msg = "MINES ARMED! / AKNÁK ÉLESÍTVE!";
+                break;
+            case RoundType.Traps:
+                msg = "TRAPS ARMED! / CSAPDÁK ÉLESÍTVE!";
+                break;
+                // Normal eset ide elvileg be se jut, de ha mégis, üres marad a msg
+        }
+
+        if (!string.IsNullOrEmpty(msg))
+        {
+            Debug.Log($"[Server] Csapda üzenet küldése: {msg}");
+            ShowTrapNotificationClientRpc(msg);
         }
     }
     [ClientRpc]
     private void EnableHuntersShootingClientRpc(bool enabled)
     {
-        // Megkeressük a helyi játékost
         if (NetworkManager.Singleton.SpawnManager.GetLocalPlayerObject().TryGetComponent(out HunterShootingSystem shooting))
         {
             shooting.EnableShooting(enabled);
+        }
+    }
+    [ClientRpc]
+    private void ShowTrapNotificationClientRpc(string msg)
+    {
+        if (GameHUD.Instance != null)
+        {
+            GameHUD.Instance.ShowNotification(msg);
         }
     }
 }

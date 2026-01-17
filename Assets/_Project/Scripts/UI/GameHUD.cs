@@ -12,45 +12,44 @@ public class GameHUD : MonoBehaviour
     [SerializeField] private TextMeshProUGUI myHpText;
 
     [Header("Hunter Publikus Infó (Mindenki látja)")]
-    [SerializeField] private GameObject hunterInfoPanel; // Szarvasoknak
-    [SerializeField] private Slider hunterSanityBar;     // Szarvasoknak
+    [SerializeField] private GameObject hunterInfoPanel;
+    [SerializeField] private Slider hunterSanityBar;
     [SerializeField] private TextMeshProUGUI hunterSanityText;
 
     [Header("Egyéb UI")]
     [SerializeField] private GameObject crosshair;
-    [SerializeField] private TextMeshProUGUI timerText; // KÖZÉPEN FENT
+    [SerializeField] private TextMeshProUGUI timerText;
     [SerializeField] private GameObject winPanel;
     [SerializeField] private TextMeshProUGUI winText;
+    [SerializeField] private TextMeshProUGUI interactionText;
 
     [Header("Színek")]
     [SerializeField] private Color hunterHealthColor = Color.red;
     [SerializeField] private Color deerHealthColor = new Color(0.4f, 0.8f, 0.2f);
 
+    private bool amIHunter = false;
+
     private void Awake()
     {
-        // Singleton biztosítása
         if (Instance != null && Instance != this)
         {
             Destroy(gameObject);
             return;
         }
         Instance = this;
-        Debug.Log("GameHUD Inicializálva!"); // Debug, hogy lássuk, él-e
     }
     public void SetRoleUI(bool isHunter)
     {
-        // 1. Saját nézet
+        amIHunter = isHunter;
+
         if (crosshair != null) crosshair.SetActive(isHunter);
+
         if (myHealthFill != null) myHealthFill.color = isHunter ? hunterHealthColor : deerHealthColor;
 
-        // 2. Hunter Info Panel (Csak Szarvasok látják a publikus adatot)
-        if (hunterInfoPanel != null)
-        {
-            hunterInfoPanel.SetActive(!isHunter);
-        }
+        if (hunterInfoPanel != null) hunterInfoPanel.SetActive(false);
 
-        // Reset Win Panel
-        if (winPanel != null) winPanel.SetActive(false);
+        ResetWinScreen();
+        SetInteractionText(false);
     }
     public void UpdateMyHealth(float currentHealth)
     {
@@ -59,21 +58,41 @@ public class GameHUD : MonoBehaviour
     }
     public void UpdateHunterSanity(float sanity)
     {
-        if (hunterSanityBar != null) hunterSanityBar.value = sanity;
-        if (hunterSanityText != null) hunterSanityText.text = $"HUNTER SANITY: {Mathf.CeilToInt(sanity)}%";
+        if (amIHunter)
+        {
+            if (hunterInfoPanel != null) hunterInfoPanel.SetActive(false);
+            return;
+        }
+
+        bool showPanel = false;
+        if (NetworkGameManager.Instance != null)
+        {
+            showPanel = NetworkGameManager.Instance.IsInGame();
+        }
+
+        if (hunterInfoPanel != null)
+        {
+            if (hunterInfoPanel.activeSelf != showPanel)
+            {
+                hunterInfoPanel.SetActive(showPanel);
+            }
+        }
+
+        if (showPanel)
+        {
+            if (hunterSanityBar != null) hunterSanityBar.value = sanity;
+            if (hunterSanityText != null) hunterSanityText.text = $"HUNTER SANITY: {Mathf.CeilToInt(sanity)}%";
+        }
     }
     public void UpdateTimer(string text)
     {
         if (timerText != null)
         {
-            // Ha van szöveg (pl. "START: 5"), akkor legyen aktív
             bool shouldBeActive = !string.IsNullOrEmpty(text);
-
             if (timerText.gameObject.activeSelf != shouldBeActive)
             {
                 timerText.gameObject.SetActive(shouldBeActive);
             }
-
             timerText.text = text;
         }
     }
@@ -88,5 +107,35 @@ public class GameHUD : MonoBehaviour
     public void ResetWinScreen()
     {
         if (winPanel != null) winPanel.SetActive(false);
+        if (hunterInfoPanel != null) hunterInfoPanel.SetActive(false);
+    }
+    public void ShowNotification(string message)
+    {
+        if (timerText != null)
+        {
+            timerText.gameObject.SetActive(true);
+            timerText.text = message;
+            timerText.color = Color.red;
+
+            StartCoroutine(HideNotificationRoutine());
+        }
+    }
+    public void SetInteractionText(bool isActive, string text = "")
+    {
+        if (interactionText != null)
+        {
+            interactionText.gameObject.SetActive(isActive);
+            if (isActive) interactionText.text = text;
+        }
+    }
+    private System.Collections.IEnumerator HideNotificationRoutine()
+    {
+        yield return new WaitForSeconds(3f);
+        if (timerText != null)
+        {
+            timerText.text = "";
+            timerText.gameObject.SetActive(false);
+            timerText.color = Color.white;
+        }
     }
 }

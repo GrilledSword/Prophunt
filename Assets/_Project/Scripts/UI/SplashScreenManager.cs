@@ -1,7 +1,7 @@
 using UnityEngine;
 using UnityEngine.SceneManagement;
-using UnityEngine.InputSystem; // Kell az Input Systemhez!
-using TMPro; // Ha TextMeshPro-t használsz (javasolt!)
+using UnityEngine.InputSystem;
+using TMPro;
 using System.Collections;
 
 namespace Prophunt.UI
@@ -13,13 +13,12 @@ namespace Prophunt.UI
         [SerializeField] private float blinkSpeed = 1.0f;
 
         [Header("UI Referenciák")]
-        [SerializeField] private TextMeshProUGUI pressEnterText; // Húzd be ide a feliratot
+        [SerializeField] private TextMeshProUGUI pressEnterText;
 
         private bool isLoading = false;
 
         private void Start()
         {
-            // Elindítjuk a villogó szöveg coroutine-t
             if (pressEnterText != null)
             {
                 StartCoroutine(BlinkTextRoutine());
@@ -28,16 +27,13 @@ namespace Prophunt.UI
 
         private void Update()
         {
-            // Ha már töltünk, ne csináljon semmit
             if (isLoading) return;
 
-            // Figyeljük az ENTER gombot az Input Systemmel
             if (Keyboard.current != null && Keyboard.current.enterKey.wasPressedThisFrame)
             {
                 LoadMainMenu();
             }
 
-            // Opcionális: Érintõképernyõre (hogy mobilon is át lehessen lépni)
             if (Touchscreen.current != null && Touchscreen.current.primaryTouch.press.wasPressedThisFrame)
             {
                 LoadMainMenu();
@@ -47,13 +43,9 @@ namespace Prophunt.UI
         private void LoadMainMenu()
         {
             isLoading = true;
-            Debug.Log("Váltás a fõmenüre...");
-
-            // Itt késõbb lehetne egy Fade Out animációt hívni
             SceneManager.LoadScene(mainMenuSceneName);
         }
 
-        // Egy kis vizuális extra: villogó szöveg
         private IEnumerator BlinkTextRoutine()
         {
             while (!isLoading)

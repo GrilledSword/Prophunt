@@ -2,7 +2,6 @@ using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-// Ez a script felel azért, hogy a szarvas át tudjon változni
 [RequireComponent(typeof(PlayerNetworkController))]
 public class DeerPropSystem : NetworkBehaviour
 {

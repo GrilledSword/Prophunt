@@ -9,12 +9,12 @@ public class BearTrap : NetworkBehaviour
     {
         if (!IsServer) return;
         if (isActivated.Value) return;
+        if (NetworkGameManager.Instance != null && !NetworkGameManager.Instance.areTrapsActive.Value)
+        {
+            return;
+        }
 
-        Debug.Log($"[BearTrap] Valami ráment: {other.name}"); // DEBUG
-
-        // Szintén a szülõt keressük, hátha a "Foot" collidert találtuk el
         var victimController = other.GetComponentInParent<PlayerNetworkController>();
-
         if (victimController != null)
         {
             isActivated.Value = true;
@@ -26,7 +26,6 @@ public class BearTrap : NetworkBehaviour
     [ClientRpc]
     private void CloseTrapClientRpc()
     {
-        // Itt játszd le a csapda animációt / hangot
         Debug.Log("CSATT!");
     }
 }
