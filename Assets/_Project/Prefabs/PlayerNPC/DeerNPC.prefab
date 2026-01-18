@@ -99,10 +99,12 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Npc
   ShowTopMostFoldoutHeaderGroup: 1
-  wanderRadius: 5
+  wanderRadius: 3
   waitTimeMin: 5
   waitTimeMax: 15
   walkSpeed: 0.5
+  eatTimeMin: 5
+  eatTimeMax: 10
   speedParam: Speed
   eatTrigger: Eat
 --- !u!195 &1974211912385723003

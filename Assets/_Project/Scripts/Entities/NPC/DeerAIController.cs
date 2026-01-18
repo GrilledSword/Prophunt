@@ -8,15 +8,21 @@ using Unity.Netcode.Components;
 public class DeerAIController : NetworkBehaviour
 {
     [Header("Beállítások")]
-    [SerializeField] private float wanderRadius = 15f; // Milyen messze mehet el
-    [SerializeField] private float waitTimeMin = 2f;   // Mennyit várjon egy helyben
+    [SerializeField] private float wanderRadius = 15f;
+    [SerializeField] private float waitTimeMin = 2f;
     [SerializeField] private float waitTimeMax = 5f;
     [SerializeField] private float walkSpeed = 3.5f;
 
+    [Header("Evés Beállítások")]
+    [SerializeField] private float eatTimeMin = 4f;
+    [SerializeField] private float eatTimeMax = 10f;
+
     [Header("Animáció")]
-    // Fontos: Ezek a nevek egyezzenek meg a Player Animator paramétereivel!
     [SerializeField] private string speedParam = "Speed";
-    [SerializeField] private string eatTrigger = "Eat";
+    // --- MÓDOSÍTÁS KEZDETE ---
+    // Trigger helyett Bool paramétert használunk a folyamatos állapothoz
+    [SerializeField] private string eatBool = "Eat";
+    // --- MÓDOSÍTÁS VÉGE ---
 
     private NavMeshAgent agent;
     private Animator animator;
@@ -25,11 +31,9 @@ public class DeerAIController : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
-        // Csak a Szerver futtatja az AI logikát!
-        // A kliensek csak a NetworkTransform és NetworkAnimator miatt látják az eredményt.
         if (!IsServer)
         {
-            enabled = false; // Kliensen kikapcsoljuk az Update-et
+            enabled = false;
             return;
         }
 
@@ -39,7 +43,6 @@ public class DeerAIController : NetworkBehaviour
         agent.speed = walkSpeed;
         timer = Random.Range(waitTimeMin, waitTimeMax);
 
-        // Azonnal induljon el valahova
         SetRandomDestination();
     }
 
@@ -47,14 +50,10 @@ public class DeerAIController : NetworkBehaviour
     {
         if (!IsServer) return;
 
-        // Animáció szinkronizálása a sebességgel
-        // (Feltételezzük, hogy a Blend Tree a 'Speed' paramétert figyeli)
         animator.SetFloat(speedParam, agent.velocity.magnitude);
 
-        // Ha épp eszünk, akkor nem mozgunk
         if (isEating) return;
 
-        // Ha elértük a célt (vagy nagyon közel vagyunk)
         if (!agent.pathPending && agent.remainingDistance <= agent.stoppingDistance)
         {
             if (timer > 0)
@@ -63,7 +62,6 @@ public class DeerAIController : NetworkBehaviour
             }
             else
             {
-                // Döntés: Eszünk vagy továbbmegyünk? (50-50%)
                 if (Random.value > 0.5f)
                 {
                     StartCoroutine(EatRoutine());
@@ -80,12 +78,10 @@ public class DeerAIController : NetworkBehaviour
     {
         timer = Random.Range(waitTimeMin, waitTimeMax);
 
-        // Random pont keresése a NavMesh-en
         Vector3 randomDirection = Random.insideUnitSphere * wanderRadius;
         randomDirection += transform.position;
 
         NavMeshHit hit;
-        // Megnézzük, hogy a random pont érvényes-e a NavMesh-en
         if (NavMesh.SamplePosition(randomDirection, out hit, wanderRadius, 1))
         {
             agent.SetDestination(hit.position);
@@ -95,18 +91,25 @@ public class DeerAIController : NetworkBehaviour
     private System.Collections.IEnumerator EatRoutine()
     {
         isEating = true;
-        agent.isStopped = true; // Megáll
+        agent.isStopped = true;
 
-        // Animáció triggerelése
-        animator.SetTrigger(eatTrigger);
+        // --- MÓDOSÍTÁS KEZDETE ---
+        // Bekapcsoljuk az evés állapotot (Bool = true)
+        animator.SetBool(eatBool, true);
+        // --- MÓDOSÍTÁS VÉGE ---
 
-        // Várakozás amíg "eszik" (pl. 3 mp)
-        yield return new WaitForSeconds(3f);
+        float currentEatTime = Random.Range(eatTimeMin, eatTimeMax);
 
-        agent.isStopped = false; // Indulás
+        yield return new WaitForSeconds(currentEatTime);
+
+        // --- MÓDOSÍTÁS KEZDETE ---
+        // Letelt az idõ, kikapcsoljuk az evést (Bool = false)
+        animator.SetBool(eatBool, false);
+        // --- MÓDOSÍTÁS VÉGE ---
+
+        agent.isStopped = false;
         isEating = false;
 
-        // Új célpont
         SetRandomDestination();
     }
 }
