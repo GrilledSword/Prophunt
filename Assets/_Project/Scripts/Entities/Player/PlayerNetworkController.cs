@@ -28,6 +28,10 @@ public class PlayerNetworkController : NetworkBehaviour
     [SerializeField] private float tpsCameraDistance = 4.0f;
     [SerializeField] private Vector2 pitchLimits = new Vector2(-70f, 80f);
 
+    [Header("Kamera Stabilizátor (FPS)")]
+    [SerializeField] private bool useStabilizer = true; // Kapcsoló
+    [SerializeField] private float posLerpSpeed = 15f;
+
     [Header("Harc Beállítások (Hunter)")]
     [SerializeField] private float reloadTime = 2.0f; // Mennyi ideig tart az új nyíl elõvétele
     [SerializeField] private float shootAnimDuration = 0.5f; // Mennyi idõ a lövés animáció
@@ -381,11 +385,33 @@ public class PlayerNetworkController : NetworkBehaviour
 
         if (useFps)
         {
-            sceneCamera.transform.position = targetMount.position;
-            sceneCamera.transform.rotation = targetMount.rotation;
+            // FPS MÓD (Itt kell a stabilizátor)
+            if (useStabilizer)
+            {
+                // 1. Pozíció: Lerp-eljük, hogy a kis rázkódásokat kisimítsuk
+                sceneCamera.transform.position = Vector3.Lerp(
+                    sceneCamera.transform.position,
+                    targetMount.position,
+                    Time.deltaTime * posLerpSpeed
+                );
+
+                // 2. Rotáció: EZ A TITOK!
+                // NEM vesszük át a targetMount.rotation-t (mert az a fejcsonttal együtt rázkódik).
+                // Helyette a tiszta Input alapú rotációt használjuk (CameraPitch + Test Yaw).
+                // Így a fej mozoghat alattunk, de a kamera stabil marad, mint egy igazi FPS-ben.
+                Quaternion stableRotation = Quaternion.Euler(cameraPitch, transform.eulerAngles.y, 0f);
+                sceneCamera.transform.rotation = stableRotation;
+            }
+            else
+            {
+                // Régi, "kemény" kötés (rázkódós)
+                sceneCamera.transform.position = targetMount.position;
+                sceneCamera.transform.rotation = targetMount.rotation;
+            }
         }
         else
         {
+            // TPS MÓD (Szarvas / Pánik) - Itt maradhat a régi logika
             Vector3 targetPos = targetMount.position - (targetMount.forward * tpsCameraDistance);
             sceneCamera.transform.position = targetPos;
             sceneCamera.transform.rotation = targetMount.rotation;
@@ -507,6 +533,7 @@ public class PlayerNetworkController : NetworkBehaviour
 
         transform.Rotate(Vector3.up * mouseX);
 
+        // Ez forgatja a fegyvert/kart a modellen (vizuális), de a kamera már a "Matek"-ot követi fentrõl
         if (fpsMount != null && !isPanicMode)
             fpsMount.localRotation = Quaternion.Euler(cameraPitch, 0f, 0f);
 

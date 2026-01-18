@@ -1,9 +1,14 @@
 fileFormatVersion: 2
-guid: 3190670f997507c40acd356b26567691
+guid: ffd4b465701cc4c4f997a16efe0ef7c3
 ModelImporter:
   serializedVersion: 24200
   internalIDToNameTable: []
-  externalObjects: {}
+  externalObjects:
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: LowPoly_VCol_Mat
+    second: {fileID: 2100000, guid: 28609bcb1be655a47ab17850e7bfc189, type: 2}
   materials:
     materialImportMode: 2
     materialName: 0

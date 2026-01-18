@@ -1,5 +1,5 @@
 fileFormatVersion: 2
-guid: 4cbc7a71571ff3e49bf08dc68c60f59c
+guid: b0a8e1765f60c5542b0a675c43f41dc3
 ModelImporter:
   serializedVersion: 24200
   internalIDToNameTable: []
@@ -7,8 +7,13 @@ ModelImporter:
   - first:
       type: UnityEngine:Material
       assembly: UnityEngine.CoreModule
-      name: ManMaterial
-    second: {fileID: 2100000, guid: e59785d2a4f00884ea23b453430fe61d, type: 2}
+      name: LowPoly_Ijj_Fixed_String_Mat.001
+    second: {fileID: 2100000, guid: 299863421b81b364eb2dd1875ac7fcd0, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: LowPoly_Ijj_Fixed_Wood_Mat
+    second: {fileID: 2100000, guid: e14df4b520ed58b4d8b037a34da04711, type: 2}
   materials:
     materialImportMode: 2
     materialName: 0
@@ -27,7 +32,7 @@ ModelImporter:
     animationDoRetargetingWarnings: 0
     importAnimatedCustomProperties: 0
     importConstraints: 0
-    animationCompression: 3
+    animationCompression: 1
     animationRotationError: 0.5
     animationPositionError: 0.5
     animationScaleError: 0.5
@@ -99,13 +104,13 @@ ModelImporter:
     globalScale: 1
     rootMotionBoneName: 
     hasTranslationDoF: 0
-    hasExtraRoot: 1
+    hasExtraRoot: 0
     skeletonHasParents: 1
   lastHumanDescriptionAvatarSource: {instanceID: 0}
   autoGenerateAvatarMappingIfUnspecified: 1
-  animationType: 3
+  animationType: 2
   humanoidOversampling: 1
-  avatarSetup: 1
+  avatarSetup: 0
   addHumanoidExtraRootOnlyWhenUsingAvatar: 1
   importBlendShapeDeformPercent: 1
   remapMaterialsIfMaterialImportModeIsNone: 0

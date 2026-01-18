@@ -4,99 +4,88 @@ using UnityEngine;
 [RequireComponent(typeof(PlayerNetworkController))]
 public class HunterShootingSystem : NetworkBehaviour
 {
-    [Header("Fegyver Statisztik·k")]
-    [SerializeField] private float range = 100f;
-    [SerializeField] private LayerMask shootableLayers;
-
-    [Header("Oh Deer Mechanika")]
-    [SerializeField] private float playerHitReward = 15f;
-    [SerializeField] private float npcHitPenalty = 25f;
+    [Header("√çj Be√°ll√≠t√°sok")]
+    [SerializeField] private GameObject arrowPrefab;
+    [SerializeField] private Transform firePoint;
+    [SerializeField] private float shootForce = 40f;
 
     [Header("Visuals")]
     [SerializeField] private ParticleSystem muzzleFlash;
-    [SerializeField] private Transform firePoint; // Ha van fegyvercsı vÈge pontod
 
     private PlayerNetworkController playerController;
-    private Camera cam;
+    private bool isShootingEnabled = true;
 
     public override void OnNetworkSpawn()
     {
         playerController = GetComponent<PlayerNetworkController>();
     }
 
-    // [MODIFIED] Kivettem az Update metÛdust! 
-    // MostantÛl nem figyeli az egeret, csak v·rja a parancsot.
+    public void EnableShooting(bool enable)
+    {
+        isShootingEnabled = enable;
+    }
 
     public void ResetShootingState()
     {
-        // Ide jˆhet b·rmi reset logika, ha kell
+        isShootingEnabled = true;
     }
 
-    // [MODIFIED] Ezt hÌvja meg a PlayerNetworkController
-    // VisszatÈrhetne bool-lal, ha sz·mÌtana a fireRate, de most a Reload anim·ciÛ korl·toz.
     public void TryShoot()
     {
         if (!IsOwner) return;
+        if (!isShootingEnabled) return;
 
-        // Visuals
+        if (arrowPrefab == null || firePoint == null)
+        {
+            Debug.LogError("Nincs be√°ll√≠tva az ArrowPrefab vagy a FirePoint!");
+            return;
+        }
+
         if (muzzleFlash != null) muzzleFlash.Play();
 
-        // Raycast logika
-        if (cam == null) cam = Camera.main;
-        if (cam == null) return;
+        Vector3 aimDir = GetAimDirection();
 
-        // A kÈpernyı kˆzepÈre lˆv¸nk (ahova a cÈlkereszt mutat)
+        // √Åtadjuk a saj√°t ID-nkat is (OwnerClientId)
+        SpawnArrowServerRpc(firePoint.position, aimDir, OwnerClientId);
+    }
+
+    private Vector3 GetAimDirection()
+    {
+        Camera cam = Camera.main;
+        if (cam == null) return firePoint.forward;
+
         Ray ray = cam.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0));
-        RaycastHit hit;
 
-        if (Physics.Raycast(ray, out hit, range, shootableLayers))
+        if (Physics.Raycast(ray, out RaycastHit hit, 100f))
         {
-            // Debug, hogy l·ssuk mit tal·ltunk el
-            // Debug.DrawLine(ray.origin, hit.point, Color.red, 2f);
-
-            NetworkObject targetNetObj = hit.collider.GetComponentInParent<NetworkObject>();
-
-            if (targetNetObj != null)
-            {
-                ShootServerRpc(targetNetObj.NetworkObjectId);
-            }
+            return (hit.point - firePoint.position).normalized;
+        }
+        else
+        {
+            return (ray.GetPoint(100f) - firePoint.position).normalized;
         }
     }
 
+    // [MODIFIED] √öj param√©ter: shooterId
     [ServerRpc]
-    private void ShootServerRpc(ulong targetId)
+    private void SpawnArrowServerRpc(Vector3 spawnPos, Vector3 direction, ulong shooterId)
     {
-        if (NetworkManager.Singleton.SpawnManager.SpawnedObjects.TryGetValue(targetId, out NetworkObject targetObj))
+        GameObject arrowInstance = Instantiate(arrowPrefab, spawnPos, Quaternion.LookRotation(direction));
+
+        var netObj = arrowInstance.GetComponent<NetworkObject>();
+        netObj.Spawn();
+
+        // [ADDED] Be√°ll√≠tjuk a l√∂v≈ë azonos√≠t√≥j√°t
+        var arrowScript = arrowInstance.GetComponent<ArrowProjectile>();
+        if (arrowScript != null)
         {
-            var myHealth = GetComponent<HealthComponent>();
+            arrowScript.Initialize(shooterId);
+        }
 
-            // 1. Eltal·ltunk egy J·tÈkost?
-            if (targetObj.GetComponent<PlayerNetworkController>() != null)
-            {
-                if (targetObj.TryGetComponent(out HealthComponent targetHealth))
-                {
-                    // A Prop Hunt szab·lyai szerint a tal·lat insta-kill vagy nagy sebzÈs
-                    targetHealth.TakeHit(9999);
-                }
-
-                // Jutalmazzuk a vad·szt
-                if (myHealth != null)
-                {
-                    myHealth.ModifyHealth(playerHitReward);
-                }
-            }
-            // 2. Eltal·ltunk egy NPC-t?
-            else if (targetObj.GetComponent<DeerAIController>() != null)
-            {
-                // B¸ntetÈs: levonjuk az Èletet
-                if (myHealth != null)
-                {
-                    myHealth.ModifyHealth(-npcHitPenalty);
-                }
-
-                // Opcion·lis: Az NPC meghal/elt˚nik?
-                targetObj.Despawn(true); 
-            }
+        Rigidbody arrowRb = arrowInstance.GetComponent<Rigidbody>();
+        if (arrowRb != null)
+        {
+            arrowRb.linearVelocity = direction * shootForce;
         }
     }
 }
