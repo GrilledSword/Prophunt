@@ -34,7 +34,7 @@ public class DeerAIController : NetworkBehaviour
         }
 
         agent = GetComponent<NavMeshAgent>();
-        animator = GetComponent<Animator>();
+        animator = GetComponentInChildren<Animator>();
 
         agent.speed = walkSpeed;
         timer = Random.Range(waitTimeMin, waitTimeMax);

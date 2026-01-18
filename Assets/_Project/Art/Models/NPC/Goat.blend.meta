@@ -1,9 +1,34 @@
 fileFormatVersion: 2
-guid: 4692a688c2f2be44e82b205772fa4b2b
+guid: 09ec9528ed3b19c4dba6612feda4dbe5
 ModelImporter:
   serializedVersion: 24200
   internalIDToNameTable: []
-  externalObjects: {}
+  externalObjects:
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: Goat
+    second: {fileID: 2100000, guid: 608b46384a426a244abc7c3c9bf6c028, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: Goat Black
+    second: {fileID: 2100000, guid: 66910f5b804a84a47a08c96ed082ac04, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: Goat Claws
+    second: {fileID: 2100000, guid: f728107ecb1788348be4713d93e4ecc2, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: Goat Horn
+    second: {fileID: 2100000, guid: de8cb068b2afe574bb056e1f0cfb42d0, type: 2}
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: Material.002
+    second: {fileID: 2100000, guid: 57ee863ea0d713e4da559caa446112f1, type: 2}
   materials:
     materialImportMode: 2
     materialName: 0
@@ -92,7 +117,7 @@ ModelImporter:
     legStretch: 0.05
     feetSpacing: 0
     globalScale: 1
-    rootMotionBoneName: 
+    rootMotionBoneName: Root
     hasTranslationDoF: 0
     hasExtraRoot: 0
     skeletonHasParents: 1
