@@ -78,7 +78,6 @@ public class GameLoopManager : NetworkBehaviour
                 // Várunk, amíg a MapSettings elérhetõ lesz (betöltött a scene)
                 if (MapSettings.Instance != null)
                 {
-                    Debug.Log("[GameLoop] Pálya betöltve. Inicializálás...");
                     currentLoadingState = LoadingState.InitializingMap;
                 }
                 break;
@@ -95,7 +94,6 @@ public class GameLoopManager : NetworkBehaviour
                 ResetUIClientRpc();
                 HideLoadingScreenClientRpc(); // [FONTOS] Itt tûnik el a loading screen!
 
-                Debug.Log("[GameLoop] Inicializálás kész. Várakozás játékosokra...");
                 currentLoadingState = LoadingState.Ready;
                 break;
 

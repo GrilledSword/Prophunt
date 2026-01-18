@@ -4,8 +4,12 @@ using UnityEngine;
 [RequireComponent(typeof(Rigidbody))]
 public class ArrowProjectile : NetworkBehaviour
 {
+    [Header("Játék Logika")]
+    [SerializeField] private float damage = 9999f; // Azonnali halál
+    [SerializeField] private float cost = 25f;     // Büntetés (NPC ölés)
+    [SerializeField] private float reward = 25f;   // Jutalom (Játékos ölés)
+
     [Header("Beállítások")]
-    [SerializeField] private float damage = 25f;
     [SerializeField] private float lifeTime = 10f;
     [SerializeField] private float destroyTimeAfterHit = 5f;
 
@@ -14,20 +18,20 @@ public class ArrowProjectile : NetworkBehaviour
 
     private Rigidbody rb;
     private bool hasHit = false;
-    private ulong shooterClientId;
+    private ulong shooterObjectId; // A lövő hálózati azonosítója
 
     public override void OnNetworkSpawn()
     {
         rb = GetComponent<Rigidbody>();
-        if (IsServer)
-        {
-            Destroy(gameObject, lifeTime);
-        }
+        // FONTOS: Gyors mozgásnál kötelező a ContinuousDynamic
+        rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+
+        if (IsServer) Destroy(gameObject, lifeTime);
     }
 
-    public void Initialize(ulong shooterId)
+    public void Initialize(ulong shooterObjId)
     {
-        shooterClientId = shooterId;
+        shooterObjectId = shooterObjId;
     }
 
     private void FixedUpdate()
@@ -43,71 +47,101 @@ public class ArrowProjectile : NetworkBehaviour
     {
         if (!IsServer || hasHit) return;
 
-        // [FONTOS] Ne ütközzünk más Triggerekkel! 
-        // (Pl. az NPC "Aggro Radius" gömbjével, ami láthatatlan)
-        if (other.isTrigger) return;
-
-        // Saját magunkat ne találjuk el
+        // Saját magunkat (Lövőt) ne találjuk el
         NetworkObject hitNetObj = other.GetComponentInParent<NetworkObject>();
-        if (hitNetObj != null && hitNetObj.OwnerClientId == shooterClientId) return;
+        if (hitNetObj != null && hitNetObj.NetworkObjectId == shooterObjectId) return;
+
+        // Triggerek szűrése (kivéve CharacterController, mert az fontos)
+        if (other.isTrigger && !other.GetComponent<CharacterController>())
+        {
+            if (other.name.ToLower().Contains("aggro") || other.name.ToLower().Contains("zone")) return;
+        }
 
         hasHit = true;
         bool hitLivingTarget = false;
 
-        // --- DEBUG: Lássuk pontosan mit találtunk el ---
-        Debug.Log($"🏹 NYÍL TALÁLAT! Eltalált Collider: '{other.name}' | Szülő: '{other.transform.root.name}'");
+        Debug.Log($"[Arrow] TALÁLAT: {other.name} | Szülő: {other.transform.root.name}");
 
-        // 1. Játékos keresése
+        // --- TALÁLAT LOGIKA ---
+
+        // 1. Játékos keresése (HealthComponent)
         var targetHealth = other.GetComponentInParent<HealthComponent>();
         if (targetHealth != null)
         {
-            targetHealth.TakeHit(9999);
+            // Ellenséges játékos találat
+            targetHealth.TakeHit(damage);
             hitLivingTarget = true;
-            Debug.Log(">>> JÁTÉKOS TALÁLAT (HealthComponent megvan)!");
+            Debug.Log(">>> JÁTÉKOS LELŐVE! +HP a Vadásznak.");
+
+            // JUTALOM: Adunk életet a vadásznak
+            ModifyShooterHealth(reward);
         }
 
-        // 2. NPC keresése (Ha nem játékos volt)
+        // 2. NPC keresése (DeerAIController) - Ha nem Játékos volt
         if (!hitLivingTarget)
         {
             var npcController = other.GetComponentInParent<DeerAIController>();
             if (npcController != null)
             {
                 hitLivingTarget = true;
-                Debug.Log(">>> NPC SZARVAS TALÁLAT (DeerAIController megvan)!");
+                Debug.Log(">>> NPC ELTALÁLVA -> Despawn és -HP a Vadásznak!");
 
-                // Ha van az NPC-n HealthComponent, azt is sebezzük
-                var npcHealth = other.GetComponentInParent<HealthComponent>();
-                if (npcHealth) npcHealth.TakeHit(9999);
+                // BÜNTETÉS: Levonunk életet a vadásztól
+                ModifyShooterHealth(-cost);
+
+                // NPC eltüntetése
+                NetworkObject npcNetObject = other.GetComponentInParent<NetworkObject>();
+                if (npcNetObject != null && npcNetObject.IsSpawned)
+                {
+                    npcNetObject.Despawn();
+                }
             }
         }
 
-        // --- REAKCIÓ ---
+        // --- NYÍL SORSA ---
+
         if (hitLivingTarget)
         {
-            Debug.Log("-> Élőlény találat: Törlés");
+            // Ha élőlényt találtunk, a nyíl tűnjön el
             GetComponent<NetworkObject>().Despawn();
         }
         else
         {
-            Debug.Log("-> Fal/Tárgy találat: Megállás");
+            // Fal találat - Álljon meg
             StopArrow();
+        }
+    }
+
+    // [ADDED] Segédfüggvény a lövő életének módosítására
+    private void ModifyShooterHealth(float amount)
+    {
+        // Megkeressük a lövő objektumot az ID alapján a SpawnManager-ben
+        if (NetworkManager.Singleton.SpawnManager.SpawnedObjects.TryGetValue(shooterObjectId, out NetworkObject shooterObj))
+        {
+            var shooterHealth = shooterObj.GetComponent<HealthComponent>();
+            if (shooterHealth != null)
+            {
+                shooterHealth.ModifyHealth(amount);
+                Debug.Log($"[Arrow] Vadász élete módosítva: {amount}");
+            }
+        }
+        else
+        {
+            Debug.LogWarning("[Arrow] Nem található a lövő játékos a szerveren (lehet, hogy kilépett).");
         }
     }
 
     private void StopArrow()
     {
-        // [JAVÍTVA] Unity 6 kompatibilis sorrend!
-        if (rb != null)
+        // Unity 6 kompatibilis megállítás
+        if (rb != null && !rb.isKinematic)
         {
-            // 1. Először nullázzuk a sebességet
             rb.linearVelocity = Vector3.zero;
             rb.angularVelocity = Vector3.zero;
-
-            // 2. Csak utána fagyasztjuk le
+            rb.collisionDetectionMode = CollisionDetectionMode.Discrete;
             rb.isKinematic = true;
         }
 
-        // Triggerek kikapcsolása
         var colliders = GetComponentsInChildren<Collider>();
         foreach (var c in colliders) c.enabled = false;
 
@@ -123,12 +157,11 @@ public class ArrowProjectile : NetworkBehaviour
         if (TryGetComponent(out Rigidbody r))
         {
             r.linearVelocity = Vector3.zero;
+            r.collisionDetectionMode = CollisionDetectionMode.Discrete;
             r.isKinematic = true;
         }
-
         var colliders = GetComponentsInChildren<Collider>();
         foreach (var c in colliders) c.enabled = false;
-
         if (trailRenderer) trailRenderer.enabled = false;
     }
 

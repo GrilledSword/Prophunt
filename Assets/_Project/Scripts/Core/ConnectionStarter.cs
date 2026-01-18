@@ -20,7 +20,6 @@ public class ConnectionStarter : MonoBehaviour
         // Döntés: Host vagy Kliens?
         if (GameSessionSettings.Instance.ShouldStartAsHost)
         {
-            Debug.Log("Starting Host via Settings...");
             NetworkManager.Singleton.StartHost();
         }
         else

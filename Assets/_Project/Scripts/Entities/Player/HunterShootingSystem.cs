@@ -46,7 +46,7 @@ public class HunterShootingSystem : NetworkBehaviour
         Vector3 aimDir = GetAimDirection();
 
         // Átadjuk a saját ID-nkat is (OwnerClientId)
-        SpawnArrowServerRpc(firePoint.position, aimDir, OwnerClientId);
+        SpawnArrowServerRpc(firePoint.position, aimDir, NetworkObjectId);
     }
 
     private Vector3 GetAimDirection()
@@ -68,18 +68,18 @@ public class HunterShootingSystem : NetworkBehaviour
 
     // [MODIFIED] Új paraméter: shooterId
     [ServerRpc]
-    private void SpawnArrowServerRpc(Vector3 spawnPos, Vector3 direction, ulong shooterId)
+    private void SpawnArrowServerRpc(Vector3 spawnPos, Vector3 direction, ulong shooterObjectId)
     {
         GameObject arrowInstance = Instantiate(arrowPrefab, spawnPos, Quaternion.LookRotation(direction));
 
         var netObj = arrowInstance.GetComponent<NetworkObject>();
         netObj.Spawn();
 
-        // [ADDED] Beállítjuk a lövő azonosítóját
         var arrowScript = arrowInstance.GetComponent<ArrowProjectile>();
         if (arrowScript != null)
         {
-            arrowScript.Initialize(shooterId);
+            // Átadjuk az Object ID-t
+            arrowScript.Initialize(shooterObjectId);
         }
 
         Rigidbody arrowRb = arrowInstance.GetComponent<Rigidbody>();
