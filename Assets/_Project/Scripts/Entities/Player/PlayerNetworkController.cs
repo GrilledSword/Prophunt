@@ -1,15 +1,19 @@
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.InputSystem;
-using UnityEngine.Rendering;
+using System.Collections;
 
 [RequireComponent(typeof(CharacterController))]
 [RequireComponent(typeof(HealthComponent))]
+[RequireComponent(typeof(AudioSource))]
 public class PlayerNetworkController : NetworkBehaviour
 {
     [Header("Mozgás Beállítások")]
-    [SerializeField] private float walkSpeed = 5f;
-    [SerializeField] private float sprintSpeed = 9f;
+    [SerializeField] private float hunterWalkSpeed = 5f;
+    [SerializeField] private float hunterSprintSpeed = 9f;
+    [SerializeField] private float deerWalkSpeed = 6f;
+    [SerializeField] private float deerSprintSpeed = 10f;
+
     [SerializeField] private float hunterSprintCost = 5f;
     [SerializeField] private float rotationSmoothTime = 0.1f;
     [SerializeField] private float gravity = -9.81f;
@@ -20,9 +24,19 @@ public class PlayerNetworkController : NetworkBehaviour
     [SerializeField] private float dashCooldown = 3f;
 
     [Header("Kamera Beállítások")]
-    [SerializeField] private float mouseSensitivity = 2.0f;
+    [SerializeField] private float mouseSensitivity = 0.5f;
     [SerializeField] private float tpsCameraDistance = 4.0f;
     [SerializeField] private Vector2 pitchLimits = new Vector2(-70f, 80f);
+
+    [Header("Harc Beállítások (Hunter)")]
+    [SerializeField] private float reloadTime = 2.0f; // Mennyi ideig tart az új nyíl elõvétele
+    [SerializeField] private float shootAnimDuration = 0.5f; // Mennyi idõ a lövés animáció
+
+    [Header("Audio & Animáció")]
+    private Animator animator;
+
+    [SerializeField] private AudioClip eatSoundClip;
+    [SerializeField] private AudioSource audioSource;
 
     [Header("References")]
     [SerializeField] private GameObject hunterModel;
@@ -31,6 +45,8 @@ public class PlayerNetworkController : NetworkBehaviour
     [SerializeField] private Transform tpsMount;
 
     public NetworkVariable<bool> isHunter = new NetworkVariable<bool>(false);
+
+    private NetworkVariable<bool> isMimicEating = new NetworkVariable<bool>(false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
     private CharacterController characterController;
     private HealthComponent healthComponent;
@@ -49,6 +65,11 @@ public class PlayerNetworkController : NetworkBehaviour
 
     private bool isGhost = false;
     private bool isUIConnected = false;
+    private bool isPanicMode = false;
+
+    // [ADDED] Új állapotjelzõk a mozgás korlátozásához
+    private bool isAiming = false;
+    private bool isReloading = false;
 
     private bool isTrapped = false;
     private int trapEscapePressesNeeded = 10;
@@ -56,11 +77,32 @@ public class PlayerNetworkController : NetworkBehaviour
 
     private FoodItem nearbyFoodItem = null;
 
+    // Animator Hash ID-k
+    private int animIDSpeed;
+    private int animIDIsEating;
+    private int animIDShoot;
+    private int animIDReload;
+    private int animIDAiming; // [ADDED]
 
     public override void OnNetworkSpawn()
     {
         characterController = GetComponent<CharacterController>();
         healthComponent = GetComponent<HealthComponent>();
+
+        if (audioSource == null) audioSource = GetComponent<AudioSource>();
+        if (audioSource != null)
+        {
+            audioSource.spatialBlend = 1.0f;
+            audioSource.rolloffMode = AudioRolloffMode.Linear;
+            audioSource.maxDistance = 20f;
+        }
+
+        // Animator ID-k
+        animIDSpeed = Animator.StringToHash("Speed");
+        animIDIsEating = Animator.StringToHash("IsEating");
+        animIDShoot = Animator.StringToHash("Shoot");
+        animIDReload = Animator.StringToHash("IsReloading");
+        animIDAiming = Animator.StringToHash("IsAiming"); // [ADDED]
 
         if (healthComponent != null)
         {
@@ -84,8 +126,19 @@ public class PlayerNetworkController : NetworkBehaviour
         }
 
         isHunter.OnValueChanged += OnRoleChanged;
+        isMimicEating.OnValueChanged += OnMimicEatingChanged;
+
         UpdateVisuals(isHunter.Value);
     }
+
+    private void OnMimicEatingChanged(bool previous, bool current)
+    {
+        if (animator != null && !isHunter.Value)
+        {
+            animator.SetBool(animIDIsEating, current);
+        }
+    }
+
     private void TryConnectToHUD()
     {
         if (isUIConnected) return;
@@ -115,6 +168,7 @@ public class PlayerNetworkController : NetworkBehaviour
         {
             healthComponent.currentHealth.OnValueChanged -= OnHealthChanged;
         }
+        isMimicEating.OnValueChanged -= OnMimicEatingChanged;
         base.OnNetworkDespawn();
     }
     private void OnRoleChanged(bool previous, bool current)
@@ -127,11 +181,12 @@ public class PlayerNetworkController : NetworkBehaviour
         UpdateVisuals(current);
         if (IsOwner && GameHUD.Instance != null) GameHUD.Instance.SetRoleUI(current);
     }
+
     private void UpdateVisuals(bool hunterParams)
     {
         if (IsOwner)
         {
-            if (hunterModel) hunterModel.SetActive(false);
+            if (hunterModel) hunterModel.SetActive(hunterParams);
             if (deerModel) deerModel.SetActive(!hunterParams);
         }
         else
@@ -139,25 +194,178 @@ public class PlayerNetworkController : NetworkBehaviour
             if (hunterModel) hunterModel.SetActive(hunterParams);
             if (deerModel) deerModel.SetActive(!hunterParams);
         }
+
+        GameObject targetModel = hunterParams ? hunterModel : deerModel;
+
+        if (targetModel != null)
+        {
+            animator = targetModel.GetComponentInChildren<Animator>(true);
+        }
     }
+
     private void Update()
     {
         if (!IsOwner) return;
         if (!isUIConnected) TryConnectToHUD();
 
-        if (isGhost)
-        {
-            HandleInput();
-            MoveGhost();
-            return;
-        }
+        if (isGhost) { HandleInput(); MoveGhost(); return; }
         if (isTrapped) { HandleTrapEscape(); return; }
 
         HandleInteractionInput();
-        HandleInput();
-        if (isHunter.Value) { MoveHunter(); LookHunter(); }
-        else { MoveDeer(); LookDeer(); }
+        HandleInput(); // Mozgás input (WASD)
+
+        if (isHunter.Value)
+        {
+            HandleHunterCombat(); // [ÚJ] Itt kezeljük a Célzást és Lövést
+            MoveHunter();
+            LookHunter();
+        }
+        else
+        {
+            HandleMimicEating();
+            MoveDeer();
+            LookDeer();
+        }
+
+        HandleAnimations();
     }
+    private void HandleHunterCombat()
+    {
+        // 1. Célzás (Jobb Klikk nyomva tartása)
+        // Ha épp töltünk, akkor nem célozhatunk (vagy kényszerítjük, hogy ne)
+        if (Mouse.current != null && !isReloading)
+        {
+            bool rightClickHeld = Mouse.current.rightButton.isPressed;
+
+            // Csak akkor változtatunk, ha eltér az eddigitõl
+            if (isAiming != rightClickHeld)
+            {
+                isAiming = rightClickHeld;
+                if (animator != null) animator.SetBool(animIDAiming, isAiming);
+            }
+        }
+        else if (isReloading)
+        {
+            // Töltés alatt nem célzunk (vagy maradhat, de a mozgás úgyis tiltva van)
+            isAiming = false;
+            if (animator != null) animator.SetBool(animIDAiming, false);
+        }
+
+        // 2. Lövés (Bal Klikk)
+        // FELTÉTEL: Célzunk ÉS Nem töltünk ÉS Bal klikk
+        if (isAiming && !isReloading && Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
+        {
+            PerformShoot();
+        }
+    }
+    private void PerformShoot()
+    {
+        // 1. Lövés logikája (Raycast, sebzés stb.)
+        var shootingSystem = GetComponent<HunterShootingSystem>();
+        if (shootingSystem != null)
+        {
+            // Meghívjuk a shooting rendszert (feltételezzük, hogy van ilyen metódusa)
+            // Ha nincs, akkor itt implementáljuk a Raycast-ot.
+            shootingSystem.TryShoot();
+        }
+
+        // 2. Animáció
+        if (animator != null) animator.SetTrigger(animIDShoot);
+
+        // 3. Automatikus Újratöltés indítása
+        StartCoroutine(ReloadSequence());
+    }
+    private IEnumerator ReloadSequence()
+    {
+        // Várunk, amíg a lövés animáció lemegy (pl. 0.5 sec)
+        yield return new WaitForSeconds(shootAnimDuration);
+
+        // Töltés kezdete
+        isReloading = true;
+        SetReloadAnim(true);
+
+        // Várunk a töltés idejére (pl. 2.0 sec)
+        yield return new WaitForSeconds(reloadTime);
+
+        // Töltés vége
+        isReloading = false;
+        SetReloadAnim(false);
+    }
+    private void HandleAnimations()
+    {
+        if (animator == null) return;
+
+        float currentSpeed = new Vector3(characterController.velocity.x, 0, characterController.velocity.z).magnitude;
+        float animSpeed = 0f;
+
+        if (isHunter.Value)
+        {
+            if (currentSpeed > 0.1f)
+            {
+                // Ha célzunk, akkor Séta (1), ha nem és sprintelünk, akkor Futás (2)
+                if (isAiming) animSpeed = 1f;
+                else animSpeed = (currentSpeed > hunterWalkSpeed + 1f) ? 2f : 1f;
+            }
+        }
+        else
+        {
+            if (currentSpeed > 0.1f) animSpeed = (currentSpeed > deerWalkSpeed + 1f) ? 2f : 1f;
+        }
+
+        animator.SetFloat(animIDSpeed, Mathf.Lerp(animator.GetFloat(animIDSpeed), animSpeed, Time.deltaTime * 10f));
+    }
+
+    // --- Publikus hívások a ShootingSystem-nek ---
+
+    public void TriggerShootAnim()
+    {
+        if (animator != null && isHunter.Value)
+        {
+            animator.SetTrigger(animIDShoot);
+        }
+    }
+
+    // [MODIFIED] Újratöltés beállítása és mozgás tiltásának kezelése
+    public void SetReloadAnim(bool reloading)
+    {
+        isReloading = reloading; // Ez blokkolja majd a mozgást a GetCurrentSpeed-ben
+
+        if (animator != null && isHunter.Value)
+        {
+            animator.SetBool(animIDReload, reloading);
+        }
+    }
+
+    // [ADDED] Célzás beállítása
+    public void SetAimingAnim(bool aiming)
+    {
+        isAiming = aiming; // Ez tiltja a sprintet
+
+        if (animator != null && isHunter.Value)
+        {
+            animator.SetBool(animIDAiming, aiming);
+        }
+    }
+    // ---------------------------------------------
+
+    private void HandleMimicEating()
+    {
+        if (isHunter.Value) return;
+
+        bool isHoldingE = Keyboard.current.eKey.isPressed;
+
+        if (isHoldingE != isMimicEating.Value)
+        {
+            SetMimicEatingServerRpc(isHoldingE);
+        }
+    }
+
+    [ServerRpc]
+    private void SetMimicEatingServerRpc(bool isEating)
+    {
+        isMimicEating.Value = isEating;
+    }
+
     private void LateUpdate()
     {
         if (!IsOwner) return;
@@ -166,10 +374,12 @@ public class PlayerNetworkController : NetworkBehaviour
     }
     private void UpdateCameraPosition()
     {
-        Transform targetMount = isHunter.Value ? fpsMount : tpsMount;
+        bool useFps = isHunter.Value && !isPanicMode;
+        Transform targetMount = useFps ? fpsMount : tpsMount;
+
         if (targetMount == null) return;
 
-        if (isHunter.Value)
+        if (useFps)
         {
             sceneCamera.transform.position = targetMount.position;
             sceneCamera.transform.rotation = targetMount.rotation;
@@ -215,12 +425,15 @@ public class PlayerNetworkController : NetworkBehaviour
         float speed = GetCurrentSpeed();
         Vector3 move = transform.right * moveInput.x + transform.forward * moveInput.y;
 
+        // Ha a sebesség 0 (pl. töltés miatt), a move vektor is nullázódik
         characterController.Move(move * speed * Time.deltaTime);
     }
     private void MoveDeer()
     {
         if (!characterController.enabled) return;
         ApplyGravity();
+
+        if (isMimicEating.Value) return;
 
         if (isDashing)
         {
@@ -247,24 +460,34 @@ public class PlayerNetworkController : NetworkBehaviour
             characterController.Move(moveDir.normalized * GetCurrentSpeed() * Time.deltaTime);
         }
     }
+
+    // [MODIFIED] Itt történik a varázslat: Sebesség korlátozás állapotok szerint
     private float GetCurrentSpeed()
     {
-        bool isSprinting = Keyboard.current != null && Keyboard.current.leftShiftKey.isPressed;
-        float speed = walkSpeed;
+        if (isPanicMode) return hunterSprintSpeed;
 
-        if (isSprinting && moveInput.magnitude > 0)
+        // 1. Ha töltünk, nincs mozgás!
+        if (isHunter.Value && isReloading) return 0f;
+
+        bool isSprinting = Keyboard.current != null && Keyboard.current.leftShiftKey.isPressed;
+
+        if (isHunter.Value)
         {
-            if (isHunter.Value)
+            // 2. Ha célzunk, akkor NINCS sprint, csak séta!
+            if (isAiming) return hunterWalkSpeed;
+
+            // 3. Egyébként lehet sprintelni
+            if (isSprinting && moveInput.magnitude > 0 && healthComponent.currentHealth.Value > 5f)
             {
-                if (healthComponent.currentHealth.Value > 5f)
-                {
-                    speed = sprintSpeed;
-                    ApplySprintCostServerRpc();
-                }
+                ApplySprintCostServerRpc();
+                return hunterSprintSpeed;
             }
-            else speed = sprintSpeed;
+            return hunterWalkSpeed;
         }
-        return speed;
+        else
+        {
+            return isSprinting ? deerSprintSpeed : deerWalkSpeed;
+        }
     }
     private void ApplyGravity()
     {
@@ -272,22 +495,29 @@ public class PlayerNetworkController : NetworkBehaviour
         velocity.y += gravity * Time.deltaTime;
         characterController.Move(velocity * Time.deltaTime);
     }
+
     private void LookHunter()
     {
-        float mouseX = lookInput.x * mouseSensitivity * Time.deltaTime * 10f;
-        float mouseY = lookInput.y * mouseSensitivity * Time.deltaTime * 10f;
+        float mouseX = lookInput.x * mouseSensitivity * 0.1f;
+        float mouseY = lookInput.y * mouseSensitivity * 0.1f;
 
         cameraPitch -= mouseY;
-        cameraPitch = Mathf.Clamp(cameraPitch, -90f, 90f);
+        Vector2 limits = isPanicMode ? pitchLimits : new Vector2(-90f, 90f);
+        cameraPitch = Mathf.Clamp(cameraPitch, limits.x, limits.y);
+
         transform.Rotate(Vector3.up * mouseX);
 
-        if (fpsMount != null)
+        if (fpsMount != null && !isPanicMode)
             fpsMount.localRotation = Quaternion.Euler(cameraPitch, 0f, 0f);
+
+        if (tpsMount != null && isPanicMode)
+            tpsMount.localRotation = Quaternion.Euler(cameraPitch, 0f, 0f);
     }
+
     private void LookDeer()
     {
-        float mouseX = lookInput.x * mouseSensitivity * Time.deltaTime * 10f;
-        float mouseY = lookInput.y * mouseSensitivity * Time.deltaTime * 10f;
+        float mouseX = lookInput.x * mouseSensitivity * 0.1f;
+        float mouseY = lookInput.y * mouseSensitivity * 0.1f;
 
         cameraYaw += mouseX;
         cameraPitch -= mouseY;
@@ -334,10 +564,7 @@ public class PlayerNetworkController : NetworkBehaviour
     {
         if (nearbyFoodItem != null && Keyboard.current.eKey.wasPressedThisFrame)
         {
-            // Megettük! Küldjük a kérést a szervernek
             EatFoodServerRpc(nearbyFoodItem.NetworkObjectId);
-
-            // Lokálisan azonnal eltüntetjük a feliratot, hogy ne nyomjuk meg 2x
             SetNearbyFood(null);
         }
     }
@@ -354,23 +581,31 @@ public class PlayerNetworkController : NetworkBehaviour
     [ServerRpc]
     private void EatFoodServerRpc(ulong foodNetworkId)
     {
-        // Megkeressük az objektumot ID alapján
         if (NetworkManager.Singleton.SpawnManager.SpawnedObjects.TryGetValue(foodNetworkId, out var netObj))
         {
             var food = netObj.GetComponent<FoodItem>();
             if (food != null)
             {
                 food.Eat(healthComponent);
+                PlayEatSoundClientRpc(transform.position);
             }
         }
     }
+
+    [ClientRpc]
+    private void PlayEatSoundClientRpc(Vector3 pos)
+    {
+        if (eatSoundClip != null && audioSource != null)
+        {
+            audioSource.PlayOneShot(eatSoundClip);
+        }
+    }
+
     [ServerRpc]
     private void RequestUntrapServerRpc()
     {
         SetTrappedClientRpc(false);
     }
-
-
 
     [ClientRpc]
     public void SetGhostModeClientRpc()
@@ -384,25 +619,17 @@ public class PlayerNetworkController : NetworkBehaviour
 
         if (hunterModel) hunterModel.SetActive(false);
         if (deerModel) deerModel.SetActive(false);
-
-        // GameHUD.Instance.ShowSpectatorUI();
     }
+
     [ClientRpc]
     public void TransformToPanicModeClientRpc()
     {
         var shootingSystem = GetComponent<HunterShootingSystem>();
         if (shootingSystem != null) shootingSystem.enabled = false;
 
-        if (IsOwner)
-        {
-            hunterModel.SetActive(false);
-            deerModel.SetActive(true);
-        }
-        else
-        {
-            hunterModel.SetActive(false);
-            deerModel.SetActive(true);
-        }
+        isPanicMode = true;
+        UpdateVisuals(isHunter.Value);
+
         hunterSprintCost = 0f;
     }
     private void HandleTrapEscape()
@@ -434,6 +661,11 @@ public class PlayerNetworkController : NetworkBehaviour
         isGhost = false;
         isTrapped = false;
         isDashing = false;
+        isPanicMode = false;
+
+        // [ADDED] Resetnél ezeket is nullázzuk
+        isAiming = false;
+        isReloading = false;
 
         var shooting = GetComponent<HunterShootingSystem>();
         if (shooting != null) shooting.ResetShootingState();
@@ -441,14 +673,12 @@ public class PlayerNetworkController : NetworkBehaviour
         if (characterController != null) characterController.enabled = true;
 
         gravity = -9.81f;
-        walkSpeed = 5f;
-        sprintSpeed = 9f;
 
-        UpdateVisuals(false);
+        UpdateVisuals(isHunter.Value);
 
         if (IsOwner && GameHUD.Instance != null)
         {
-            GameHUD.Instance.SetRoleUI(false);
+            GameHUD.Instance.SetRoleUI(isHunter.Value);
         }
     }
 }

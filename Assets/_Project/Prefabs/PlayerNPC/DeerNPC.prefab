@@ -102,11 +102,11 @@ MonoBehaviour:
   wanderRadius: 3
   waitTimeMin: 5
   waitTimeMax: 15
-  walkSpeed: 0.5
+  walkSpeed: 0.65
   eatTimeMin: 5
   eatTimeMax: 10
   speedParam: Speed
-  eatTrigger: Eat
+  eatBool: Eat
 --- !u!195 &1974211912385723003
 NavMeshAgent:
   m_ObjectHideFlags: 0
@@ -145,14 +145,7 @@ MonoBehaviour:
   NetworkAnimatorExpanded: 0
   AuthorityMode: 0
   m_Animator: {fileID: 4792405284993791903}
-  TransitionStateInfoList:
-  - IsCrossFadeExit: 0
-    Layer: 0
-    OriginatingState: 2081823275
-    DestinationState: -1566672390
-    TransitionDuration: 0.25
-    TriggerNameHash: -1566672390
-    TransitionIndex: 1
+  TransitionStateInfoList: []
   AnimatorParameterEntries:
     ParameterEntries:
     - name: Speed
@@ -162,7 +155,7 @@ MonoBehaviour:
     - name: Eat
       NameHash: -1566672390
       Synchronize: 1
-      ParameterType: 9
+      ParameterType: 4
   AnimatorParametersExpanded: 0
 --- !u!114 &4942300957572250194
 MonoBehaviour:

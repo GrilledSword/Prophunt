@@ -1,13 +1,10 @@
 using Unity.Netcode;
 using UnityEngine;
-using UnityEngine.InputSystem;
 
 [RequireComponent(typeof(PlayerNetworkController))]
 public class HunterShootingSystem : NetworkBehaviour
 {
     [Header("Fegyver Statisztikák")]
-    [SerializeField] private int damage = 25;
-    [SerializeField] private float fireRate = 0.5f;
     [SerializeField] private float range = 100f;
     [SerializeField] private LayerMask shootableLayers;
 
@@ -17,56 +14,51 @@ public class HunterShootingSystem : NetworkBehaviour
 
     [Header("Visuals")]
     [SerializeField] private ParticleSystem muzzleFlash;
-    [SerializeField] private Transform firePoint;
+    [SerializeField] private Transform firePoint; // Ha van fegyvercsõ vége pontod
 
     private PlayerNetworkController playerController;
-    private float nextFireTime = 0f;
     private Camera cam;
-    private bool canShoot = false;
 
     public override void OnNetworkSpawn()
     {
         playerController = GetComponent<PlayerNetworkController>();
     }
+
+    // [MODIFIED] Kivettem az Update metódust! 
+    // Mostantól nem figyeli az egeret, csak várja a parancsot.
+
     public void ResetShootingState()
     {
-        canShoot = false;
-        this.enabled = true;
-    }
-    public void EnableShooting(bool enable)
-    {
-        canShoot = enable;
-    }
-    private void Update()
-    {
-        if (!IsOwner) return;
-        if (!playerController.isHunter.Value || !canShoot) return;
-        if (Mouse.current.leftButton.isPressed && Time.time >= nextFireTime)
-        {
-            nextFireTime = Time.time + fireRate;
-            Shoot();
-        }
+        // Ide jöhet bármi reset logika, ha kell
     }
 
-    private void Shoot()
+    // [MODIFIED] Ezt hívja meg a PlayerNetworkController
+    // Visszatérhetne bool-lal, ha számítana a fireRate, de most a Reload animáció korlátoz.
+    public void TryShoot()
     {
+        if (!IsOwner) return;
+
+        // Visuals
         if (muzzleFlash != null) muzzleFlash.Play();
+
+        // Raycast logika
         if (cam == null) cam = Camera.main;
         if (cam == null) return;
 
+        // A képernyõ közepére lövünk (ahova a célkereszt mutat)
         Ray ray = cam.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0));
         RaycastHit hit;
 
         if (Physics.Raycast(ray, out hit, range, shootableLayers))
         {
+            // Debug, hogy lássuk mit találtunk el
+            // Debug.DrawLine(ray.origin, hit.point, Color.red, 2f);
+
             NetworkObject targetNetObj = hit.collider.GetComponentInParent<NetworkObject>();
 
             if (targetNetObj != null)
             {
                 ShootServerRpc(targetNetObj.NetworkObjectId);
-            }
-            else
-            {
             }
         }
     }
@@ -77,18 +69,33 @@ public class HunterShootingSystem : NetworkBehaviour
         if (NetworkManager.Singleton.SpawnManager.SpawnedObjects.TryGetValue(targetId, out NetworkObject targetObj))
         {
             var myHealth = GetComponent<HealthComponent>();
+
+            // 1. Eltaláltunk egy Játékost?
             if (targetObj.GetComponent<PlayerNetworkController>() != null)
             {
                 if (targetObj.TryGetComponent(out HealthComponent targetHealth))
                 {
+                    // A Prop Hunt szabályai szerint a találat insta-kill vagy nagy sebzés
                     targetHealth.TakeHit(9999);
                 }
-                myHealth.ModifyHealth(playerHitReward);
+
+                // Jutalmazzuk a vadászt
+                if (myHealth != null)
+                {
+                    myHealth.ModifyHealth(playerHitReward);
+                }
             }
+            // 2. Eltaláltunk egy NPC-t?
             else if (targetObj.GetComponent<DeerAIController>() != null)
             {
-                targetObj.Despawn(true);
-                myHealth.ModifyHealth(-npcHitPenalty);
+                // Büntetés: levonjuk az életet
+                if (myHealth != null)
+                {
+                    myHealth.ModifyHealth(-npcHitPenalty);
+                }
+
+                // Opcionális: Az NPC meghal/eltûnik?
+                targetObj.Despawn(true); 
             }
         }
     }
