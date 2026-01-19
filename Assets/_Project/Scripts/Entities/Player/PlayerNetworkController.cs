@@ -1,7 +1,8 @@
+using System.Collections;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.InputSystem;
-using System.Collections;
+using static NetworkGameManager;
 
 [RequireComponent(typeof(CharacterController))]
 [RequireComponent(typeof(HealthComponent))]
@@ -33,8 +34,8 @@ public class PlayerNetworkController : NetworkBehaviour
     [SerializeField] private float posLerpSpeed = 15f;
 
     [Header("Harc Beállítások (Hunter)")]
-    [SerializeField] private float reloadTime = 2.0f; // Mennyi ideig tart az új nyíl elõvétele
-    [SerializeField] private float shootAnimDuration = 0.5f; // Mennyi idõ a lövés animáció
+    [SerializeField] private float reloadTime = 0.1f; // Mennyi ideig tart az új nyíl elõvétele
+    [SerializeField] private float shootAnimDuration = 0.1f; // Mennyi idõ a lövés animáció
 
     [Header("Audio & Animáció")]
     private Animator animator;
@@ -235,13 +236,32 @@ public class PlayerNetworkController : NetworkBehaviour
     }
     private void HandleHunterCombat()
     {
-        // 1. Célzás (Jobb Klikk nyomva tartása)
-        // Ha épp töltünk, akkor nem célozhatunk (vagy kényszerítjük, hogy ne)
+        // 1. ÁLLAPOT ELLENÕRZÉS: Ha nem InGame, akkor STOP!
+        // Ha nincs GameLoopManager, vagy nem InGame az állapot, akkor nem célozhatunk és nem lõhetünk.
+        bool canCombat = true;
+        if (NetworkGameManager.Instance != null)
+        {
+            if (NetworkGameManager.Instance.currentGameState.Value != GameState.InGame)
+            {
+                canCombat = false;
+            }
+        }
+
+        // Ha tiltva van a harc (Lobby, Pánik, Vége), kényszerítsük ki a békés állapotot
+        if (!canCombat)
+        {
+            if (isAiming)
+            {
+                isAiming = false;
+                if (animator != null) animator.SetBool(animIDAiming, false);
+            }
+            return; // Kilépünk, így a lövés kód le se fut!
+        }
+
+        // 2. Normál harci logika (Célzás)
         if (Mouse.current != null && !isReloading)
         {
             bool rightClickHeld = Mouse.current.rightButton.isPressed;
-
-            // Csak akkor változtatunk, ha eltér az eddigitõl
             if (isAiming != rightClickHeld)
             {
                 isAiming = rightClickHeld;
@@ -250,13 +270,11 @@ public class PlayerNetworkController : NetworkBehaviour
         }
         else if (isReloading)
         {
-            // Töltés alatt nem célzunk (vagy maradhat, de a mozgás úgyis tiltva van)
             isAiming = false;
             if (animator != null) animator.SetBool(animIDAiming, false);
         }
 
-        // 2. Lövés (Bal Klikk)
-        // FELTÉTEL: Célzunk ÉS Nem töltünk ÉS Bal klikk
+        // 3. Lövés (Csak ha InGame voltunk, és eljutottunk idáig)
         if (isAiming && !isReloading && Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
         {
             PerformShoot();
@@ -264,19 +282,21 @@ public class PlayerNetworkController : NetworkBehaviour
     }
     private void PerformShoot()
     {
-        // 1. Lövés logikája (Raycast, sebzés stb.)
+        // Most már csak akkor jutunk ide, ha InGame van!
+
+        // 1. Lövés a rendszeren keresztül
         var shootingSystem = GetComponent<HunterShootingSystem>();
         if (shootingSystem != null)
         {
-            // Meghívjuk a shooting rendszert (feltételezzük, hogy van ilyen metódusa)
-            // Ha nincs, akkor itt implementáljuk a Raycast-ot.
+            // Mivel már ellenõriztük a GameState-et, itt biztosan lõhetünk
+            // (A HunterShootingSystem-ben lévõ safety check maradhat, nem baj)
             shootingSystem.TryShoot();
         }
 
         // 2. Animáció
         if (animator != null) animator.SetTrigger(animIDShoot);
 
-        // 3. Automatikus Újratöltés indítása
+        // 3. Újratöltés indítása
         StartCoroutine(ReloadSequence());
     }
     private IEnumerator ReloadSequence()
