@@ -12,7 +12,7 @@ GameObject:
   - component: {fileID: 7017463118603499631}
   - component: {fileID: 169235230601668104}
   - component: {fileID: 5956122488994146466}
-  m_Layer: 0
+  m_Layer: 10
   m_Name: LevelGenerator
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -46,7 +46,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
-  GlobalObjectIdHash: 3273065114
+  GlobalObjectIdHash: 2614041543
   InScenePlacedSourceGlobalObjectIdHash: 2614041543
   DeferredDespawnTick: 0
   Ownership: 1
