@@ -51,14 +51,17 @@ public class NetworkGameManager : NetworkBehaviour
         if (randomVal < chanceNormal)
         {
             currentRoundType.Value = RoundType.Normal;
+            Debug.Log("[NetworkGameManager] Selected RoundType: Normal");
         }
         else if (randomVal < chanceNormal + chanceMines)
         {
             currentRoundType.Value = RoundType.Mines;
+            Debug.Log("[NetworkGameManager] Selected RoundType: Mines");
         }
         else
         {
             currentRoundType.Value = RoundType.Traps;
+            Debug.Log("[NetworkGameManager] Selected RoundType: Traps");
         }
 
         // [REMOVED] GenerateLevel hívás - ezt a GameLoopManager kezeli!
