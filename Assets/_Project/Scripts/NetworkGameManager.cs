@@ -176,6 +176,7 @@ public class NetworkGameManager : NetworkBehaviour
         yield return new WaitForSeconds(5f);
         NetworkManager.Singleton.SceneManager.LoadScene("GameScene", UnityEngine.SceneManagement.LoadSceneMode.Single);
     }
+
     public override void OnNetworkSpawn()
     {
         if (IsServer)

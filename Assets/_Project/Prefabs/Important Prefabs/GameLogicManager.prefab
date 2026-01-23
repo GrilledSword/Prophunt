@@ -80,6 +80,12 @@ MonoBehaviour:
   chanceNormal: 70
   chanceMines: 15
   chanceTraps: 15
+  hunterWins:
+    m_InternalValue: 0
+  deerWins:
+    m_InternalValue: 0
+  targetWins:
+    m_InternalValue: 3
   currentRoundType:
     m_InternalValue: 0
 --- !u!114 &8814566040453683060

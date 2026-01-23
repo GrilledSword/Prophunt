@@ -4,6 +4,7 @@ using UnityEngine;
 public class BearTrap : NetworkBehaviour
 {
     private NetworkVariable<bool> isActivated = new NetworkVariable<bool>(false);
+    private Animator animator;
 
     private void OnTriggerEnter(Collider other)
     {
@@ -26,6 +27,7 @@ public class BearTrap : NetworkBehaviour
     [ClientRpc]
     private void CloseTrapClientRpc()
     {
-        Debug.Log("CSATT!");
+        if (animator == null) animator = GetComponentInChildren<Animator>();
+        animator.SetTrigger("CloseTrap");
     }
 }

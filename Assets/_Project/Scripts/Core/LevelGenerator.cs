@@ -35,7 +35,6 @@ public class LevelGenerator : NetworkBehaviour
     public void GenerateLevel(NetworkGameManager.RoundType roundType)
     {
         if (!IsServer) return;
-
         ClearLevel();
         SpawnObjects(foodPrefab, foodCount);
         if (deerNpcPrefab != null)
@@ -55,7 +54,6 @@ public class LevelGenerator : NetworkBehaviour
                 break;
         }
     }
-
     public void ClearLevel()
     {
         if (!IsServer) return;
