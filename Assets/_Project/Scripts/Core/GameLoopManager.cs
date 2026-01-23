@@ -162,19 +162,37 @@ public class GameLoopManager : NetworkBehaviour
                 NetworkGameManager.Instance.currentGameState.Value = NetworkGameManager.GameState.Lobby;
         }
 
+        // --- LOBBY LOGIKA ---
         if (!isMatchStarted)
         {
             int playerCount = NetworkManager.Singleton.ConnectedClientsList.Count;
-            if (playerCount >= minPlayersToStart && !isLobbyTimerRunning)
-            {
-                isLobbyTimerRunning = true;
-                currentTimer.Value = lobbyTime;
-            }
 
-            if (isLobbyTimerRunning)
+            // [JAVÍTÁS] Ha nincs elég játékos, írjuk ki a UI-ra!
+            if (playerCount < minPlayersToStart)
             {
-                currentTimer.Value -= Time.deltaTime;
-                if (currentTimer.Value <= 0f) StartMatchSequence();
+                // Ha futott a timer, állítsuk le
+                if (isLobbyTimerRunning)
+                {
+                    isLobbyTimerRunning = false;
+                    currentTimer.Value = 0;
+                }
+
+                // Folyamatosan frissítjük a szöveget, hogy lássák hányan vannak
+                UpdateWaitingUIClientRpc(playerCount, minPlayersToStart);
+            }
+            else // Van elég játékos
+            {
+                if (!isLobbyTimerRunning)
+                {
+                    isLobbyTimerRunning = true;
+                    currentTimer.Value = lobbyTime;
+                }
+
+                if (isLobbyTimerRunning)
+                {
+                    currentTimer.Value -= Time.deltaTime;
+                    if (currentTimer.Value <= 0f) StartMatchSequence();
+                }
             }
         }
         else if (isReleaseTimerRunning)
@@ -247,6 +265,9 @@ public class GameLoopManager : NetworkBehaviour
     private void OnTimerChanged(float oldVal, float newVal)
     {
         if (GameHUD.Instance == null) return;
+
+        // Ha a timer <= 0, akkor lehet, hogy épp a Waiting szöveget mutatjuk, 
+        // ezért itt CSAK akkor írunk felül, ha a timer > 0!
         if (newVal > 0)
         {
             bool isReleasePhase = false;
@@ -257,7 +278,6 @@ public class GameLoopManager : NetworkBehaviour
             string colorHex = isReleasePhase ? "<color=red>" : "<color=white>";
             GameHUD.Instance.UpdateTimer($"{colorHex}{prefix}{Mathf.CeilToInt(newVal)}</color>");
         }
-        else GameHUD.Instance.UpdateTimer("");
     }
     private void MoveHunterToOutside()
     {
@@ -295,6 +315,14 @@ public class GameLoopManager : NetworkBehaviour
             if (characterController != null) characterController.enabled = false;
             localPlayer.transform.position = position;
             if (characterController != null) characterController.enabled = true;
+        }
+    }
+    [ClientRpc]
+    private void UpdateWaitingUIClientRpc(int current, int required)
+    {
+        if (GameHUD.Instance != null)
+        {
+            GameHUD.Instance.UpdateTimer($"<color=yellow>WAITING FOR PLAYERS: {current}/{required}</color>");
         }
     }
 }

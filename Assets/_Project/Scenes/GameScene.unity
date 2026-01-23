@@ -1851,6 +1851,10 @@ PrefabInstance:
       propertyPath: m_AnchoredPosition.y
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 8268565949448212235, guid: 8b92d6b17a530104688bddbf9e97cb7a, type: 3}
+      propertyPath: m_IsActive
+      value: 1
+      objectReference: {fileID: 0}
     - target: {fileID: 8532233060382785124, guid: 8b92d6b17a530104688bddbf9e97cb7a, type: 3}
       propertyPath: m_AnchorMax.y
       value: 0
@@ -2093,6 +2097,10 @@ PrefabInstance:
     - target: {fileID: 8008894270953849453, guid: 08b323aa094b6d8419dc32b447665bd4, type: 3}
       propertyPath: m_Name
       value: LoadingScreenCanvas
+      objectReference: {fileID: 0}
+    - target: {fileID: 8008894270953849453, guid: 08b323aa094b6d8419dc32b447665bd4, type: 3}
+      propertyPath: m_IsActive
+      value: 1
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []

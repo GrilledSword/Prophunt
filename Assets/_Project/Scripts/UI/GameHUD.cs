@@ -37,6 +37,7 @@ public class GameHUD : MonoBehaviour
     [SerializeField] private GameObject winPanel;
     [SerializeField] private TextMeshProUGUI winText;
     [SerializeField] private TextMeshProUGUI interactionText;
+    [SerializeField] private TMP_Text roleText;
 
     [Header("Pause Menu")]
     [SerializeField] private GameObject pauseMenuPanel;
@@ -117,6 +118,8 @@ public class GameHUD : MonoBehaviour
 
         if (hunterInfoPanel != null) hunterInfoPanel.SetActive(false);
 
+        if (roleText != null) roleText.text = isHunter ? "ROLE: <color=red>HUNTER</color>" : "ROLE: <color=green>DEER</color>";
+
         ResetWinScreen();
         SetInteractionText(false);
     }
@@ -165,16 +168,15 @@ public class GameHUD : MonoBehaviour
             timerText.text = text;
         }
     }
-    public void ShowWinScreen(string text)
+    public void ShowWinScreen(string winnerRole)
     {
         if (winPanel != null)
         {
             winPanel.SetActive(true);
-            if (winText != null) winText.text = text;
+            if (winText != null) winText.text = winnerRole;
         }
-
-        Cursor.lockState = CursorLockMode.None;
-        Cursor.visible = true;
+        // Kikapcsoljuk az egyéb HUD elemeket a tisztább látványért
+        SetInteractionText(false);
     }
     public void ResetWinScreen()
     {
