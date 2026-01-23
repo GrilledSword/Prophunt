@@ -167,20 +167,16 @@ public class GameLoopManager : NetworkBehaviour
         {
             int playerCount = NetworkManager.Singleton.ConnectedClientsList.Count;
 
-            // [JAVÍTÁS] Ha nincs elég játékos, írjuk ki a UI-ra!
             if (playerCount < minPlayersToStart)
             {
-                // Ha futott a timer, állítsuk le
                 if (isLobbyTimerRunning)
                 {
                     isLobbyTimerRunning = false;
                     currentTimer.Value = 0;
                 }
-
-                // Folyamatosan frissítjük a szöveget, hogy lássák hányan vannak
                 UpdateWaitingUIClientRpc(playerCount, minPlayersToStart);
             }
-            else // Van elég játékos
+            else
             {
                 if (!isLobbyTimerRunning)
                 {
@@ -198,11 +194,18 @@ public class GameLoopManager : NetworkBehaviour
         else if (isReleaseTimerRunning)
         {
             currentTimer.Value -= Time.deltaTime;
+
+            // [JAVÍTÁS] Ha lejárt a Release Timer
             if (currentTimer.Value <= 0f)
             {
+                currentTimer.Value = 0f; // Biztos ami biztos nullázzuk
                 isReleaseTimerRunning = false;
+
                 MoveHunterToOutside();
                 NetworkGameManager.Instance.SetHunterFree();
+
+                // [JAVÍTÁS] Kényszerítjük a UI eltüntetését mindenkinél, mert a Timer 0 értéke önmagában már nem teszi meg
+                ClearTimerUIClientRpc();
             }
         }
     }
@@ -220,6 +223,13 @@ public class GameLoopManager : NetworkBehaviour
         isMatchStarted = true;
 
         NetworkGameManager.Instance.StartGameServerRpc();
+        if (LevelGenerator.Instance != null)
+        {
+            var roundTypes = System.Enum.GetValues(typeof(NetworkGameManager.RoundType));
+            NetworkGameManager.RoundType randomType = (NetworkGameManager.RoundType)roundTypes.GetValue(Random.Range(0, roundTypes.Length));
+            LevelGenerator.Instance.GenerateLevel(randomType);
+        }
+
         DistributePlayersToSpawnPoints();
         ToggleLobbyUIClientRpc(false);
 
@@ -266,8 +276,7 @@ public class GameLoopManager : NetworkBehaviour
     {
         if (GameHUD.Instance == null) return;
 
-        // Ha a timer <= 0, akkor lehet, hogy épp a Waiting szöveget mutatjuk, 
-        // ezért itt CSAK akkor írunk felül, ha a timer > 0!
+        // [JAVÍTÁS] Finomított logika
         if (newVal > 0)
         {
             bool isReleasePhase = false;
@@ -276,7 +285,22 @@ public class GameLoopManager : NetworkBehaviour
 
             string prefix = isReleasePhase ? "RELEASE: " : "START: ";
             string colorHex = isReleasePhase ? "<color=red>" : "<color=white>";
+
+            // Csak akkor írjuk ki, ha nem Waiting szövegnek kellene lennie
+            // De mivel a Waiting szöveg RPC-vel jön, itt egyszerûen felülírjuk, ha van Timer
             GameHUD.Instance.UpdateTimer($"{colorHex}{prefix}{Mathf.CeilToInt(newVal)}</color>");
+        }
+        else
+        {
+            // Ha a Timer 0, két eset van:
+            // 1. Lobbyban vagyunk és várunk -> Ezt az UpdateWaitingUIClientRpc kezeli, NE töröljük
+            // 2. HunterRelease vége (InGame eleje) -> Ezt törölni KELL.
+
+            if (NetworkGameManager.Instance != null &&
+                NetworkGameManager.Instance.currentGameState.Value == NetworkGameManager.GameState.HunterRelease)
+            {
+                GameHUD.Instance.UpdateTimer("");
+            }
         }
     }
     private void MoveHunterToOutside()
@@ -323,6 +347,14 @@ public class GameLoopManager : NetworkBehaviour
         if (GameHUD.Instance != null)
         {
             GameHUD.Instance.UpdateTimer($"<color=yellow>WAITING FOR PLAYERS: {current}/{required}</color>");
+        }
+    }
+    [ClientRpc]
+    private void ClearTimerUIClientRpc()
+    {
+        if (GameHUD.Instance != null)
+        {
+            GameHUD.Instance.UpdateTimer("");
         }
     }
 }
