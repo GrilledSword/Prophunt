@@ -138,7 +138,6 @@ public class GameLoopManager : NetworkBehaviour
 
                 if (NetworkGameManager.Instance != null)
                     NetworkGameManager.Instance.currentGameState.Value = NetworkGameManager.GameState.Lobby;
-
                 ResetUIClientRpc();
                 HideLoadingScreenClientRpc();
 
@@ -153,18 +152,12 @@ public class GameLoopManager : NetworkBehaviour
     private void HandleGameLoop()
     {
         if (!IsServer) return;
-
         if (isSceneReloaded && IsSpawned)
         {
             isSceneReloaded = false;
-            
-            // [NEW] Takarítás az új kör előtt
-            if (LevelGenerator.Instance != null)
-            {
-                LevelGenerator.Instance.ClearLevel();
-                Debug.Log("[GameLoop] Pálya megtisztítva az új kör előtt!");
-            }
-            
+            isMatchStarted = false;
+            isLobbyTimerRunning = false;
+            isReleaseTimerRunning = false;
             ResetUIClientRpc();
             if (NetworkGameManager.Instance != null)
                 NetworkGameManager.Instance.currentGameState.Value = NetworkGameManager.GameState.Lobby;
@@ -203,16 +196,14 @@ public class GameLoopManager : NetworkBehaviour
         {
             currentTimer.Value -= Time.deltaTime;
 
-            // [JAV�T�S] Ha lej�rt a Release Timer
             if (currentTimer.Value <= 0f)
             {
-                currentTimer.Value = 0f; // Biztos ami biztos null�zzuk
+                currentTimer.Value = 0f; 
                 isReleaseTimerRunning = false;
 
                 MoveHunterToOutside();
                 NetworkGameManager.Instance.SetHunterFree();
 
-                // [JAV�T�S] K�nyszer�tj�k a UI elt�ntet�s�t mindenkin�l, mert a Timer 0 �rt�ke �nmag�ban m�r nem teszi meg
                 ClearTimerUIClientRpc();
             }
         }
@@ -230,13 +221,24 @@ public class GameLoopManager : NetworkBehaviour
         isLobbyTimerRunning = false;
         isMatchStarted = true;
 
-        NetworkGameManager.Instance.StartGameServerRpc();
+        // [FIX] Először kiválasztjuk a RoundType-ot
+        var roundTypes = System.Enum.GetValues(typeof(NetworkGameManager.RoundType));
+        NetworkGameManager.RoundType randomType = (NetworkGameManager.RoundType)roundTypes.GetValue(Random.Range(0, roundTypes.Length));
+        
+        // Szinkronizálás a NetworkGameManager-rel
+        if (NetworkGameManager.Instance != null)
+        {
+            NetworkGameManager.Instance.currentRoundType.Value = randomType;
+        }
+
+        // UTÁNA generálás (ClearLevel belül automatikusan megtörténik)
         if (LevelGenerator.Instance != null)
         {
-            var roundTypes = System.Enum.GetValues(typeof(NetworkGameManager.RoundType));
-            NetworkGameManager.RoundType randomType = (NetworkGameManager.RoundType)roundTypes.GetValue(Random.Range(0, roundTypes.Length));
             LevelGenerator.Instance.GenerateLevel(randomType);
         }
+
+        // Szerveroldali játékállapot bejelentése
+        NetworkGameManager.Instance.StartGameServerRpc();
 
         DistributePlayersToSpawnPoints();
         ToggleLobbyUIClientRpc(false);

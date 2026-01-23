@@ -61,10 +61,7 @@ public class NetworkGameManager : NetworkBehaviour
             currentRoundType.Value = RoundType.Traps;
         }
 
-        if (LevelGenerator.Instance != null)
-        {
-            LevelGenerator.Instance.GenerateLevel(currentRoundType.Value);
-        }
+        // [REMOVED] GenerateLevel hívás - ezt a GameLoopManager kezeli!
 
         List<ulong> clientIds = connectedPlayers.Keys.ToList();
         if (clientIds.Count == 0) return;

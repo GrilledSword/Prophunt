@@ -26,23 +26,33 @@ public class LevelGenerator : NetworkBehaviour
     [SerializeField] private int npcCount = 25;
 
     private List<NetworkObject> spawnedObjects = new List<NetworkObject>();
+    private NetworkGameManager.RoundType currentRoundType = NetworkGameManager.RoundType.Normal;
 
     private void Awake()
     {
         if (Instance != null && Instance != this) Destroy(gameObject);
         Instance = this;
     }
+
     public void GenerateLevel(NetworkGameManager.RoundType roundType)
     {
         if (!IsServer) return;
-        // [REMOVED] ClearLevel() már a GameLoopManager-ben meghívódik - ne duplázódjon!
-        
+
+        // [FIX] Mindig clear az előző szintet, majd spawn az újakkal
+        ClearPreviousRoundObjects();
+
+        currentRoundType = roundType;
+
+        Debug.Log($"[LevelGenerator] 🧹 Clearing old level before generating RoundType: {roundType}");
+
+        // Mindig spawnol: Food + NPC-k
         SpawnObjects(foodPrefab, foodCount);
         if (deerNpcPrefab != null)
         {
             SpawnObjects(deerNpcPrefab, npcCount);
         }
 
+        // Round type specifikus objektumok
         switch (roundType)
         {
             case NetworkGameManager.RoundType.Normal:
@@ -54,11 +64,12 @@ public class LevelGenerator : NetworkBehaviour
                 SpawnObjects(bearTrapPrefab, bearTrapCount);
                 break;
         }
-    }
-    public void ClearLevel()
-    {
-        if (!IsServer) return;
 
+        Debug.Log($"[LevelGenerator] ✅ Level generated with RoundType: {roundType}");
+    }
+
+    private void ClearPreviousRoundObjects()
+    {
         int despawnedCount = 0;
 
         // 1. Összes tracked objektum despawnolása
