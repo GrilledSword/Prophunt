@@ -156,9 +156,13 @@ public class ArrowProjectile : NetworkBehaviour
     }
     private void DespawnArrow()
     {
-        if (IsServer && GetComponent<NetworkObject>().IsSpawned)
+        if (IsServer)
         {
-            GetComponent<NetworkObject>().Despawn();
+            var netObj = GetComponent<NetworkObject>();
+            if (netObj != null && netObj.IsSpawned)
+            {
+                netObj.Despawn();
+            }
         }
     }
     [ClientRpc]

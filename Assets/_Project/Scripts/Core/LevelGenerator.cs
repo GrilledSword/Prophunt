@@ -6,22 +6,22 @@ public class LevelGenerator : NetworkBehaviour
 {
     public static LevelGenerator Instance { get; private set; }
 
-    [Header("Spawn Terület")]
+    [Header("Spawn Terï¿½let")]
     [SerializeField] private BoxCollider spawnArea;
     [SerializeField] private LayerMask groundLayer;
 
-    [Header("Kaja Beállítások")]
+    [Header("Kaja Beï¿½llï¿½tï¿½sok")]
     [SerializeField] private GameObject foodPrefab;
     [SerializeField] private int foodCount = 10;
 
-    [Header("Veszély Beállítások")]
+    [Header("Veszï¿½ly Beï¿½llï¿½tï¿½sok")]
     [SerializeField] private GameObject landminePrefab;
     [SerializeField] private int landmineCount = 5;
 
     [SerializeField] private GameObject bearTrapPrefab;
     [SerializeField] private int bearTrapCount = 5;
 
-    [Header("NPC Beállítások")]
+    [Header("NPC Beï¿½llï¿½tï¿½sok")]
     [SerializeField] private GameObject deerNpcPrefab;
     [SerializeField] private int npcCount = 25;
 
@@ -35,7 +35,8 @@ public class LevelGenerator : NetworkBehaviour
     public void GenerateLevel(NetworkGameManager.RoundType roundType)
     {
         if (!IsServer) return;
-        ClearLevel();
+        // [REMOVED] ClearLevel() mÃ¡r a GameLoopManager-ben meghÃ­vÃ³dik - ne duplÃ¡zÃ³djon!
+        
         SpawnObjects(foodPrefab, foodCount);
         if (deerNpcPrefab != null)
         {
@@ -57,42 +58,87 @@ public class LevelGenerator : NetworkBehaviour
     public void ClearLevel()
     {
         if (!IsServer) return;
+
+        int despawnedCount = 0;
+
+        // 1. Ã–sszes tracked objektum despawnolÃ¡sa
         foreach (var obj in spawnedObjects)
         {
-            if (obj != null && obj.IsSpawned)
+            if (obj != null)
             {
-                obj.Despawn();
+                try
+                {
+                    if (obj.IsSpawned)
+                    {
+                        obj.Despawn(false);
+                        despawnedCount++;
+                        Debug.Log($"[LevelGenerator] Despawned: {obj.gameObject.name}");
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    Debug.LogError($"[LevelGenerator] Error despawning {obj.gameObject.name}: {ex.Message}");
+                }
             }
         }
         spawnedObjects.Clear();
 
-        Landmine[] mines = FindObjectsOfType<Landmine>();
-        foreach (var mine in mines)
+        // 2. BiztonsÃ¡gi takarÃ­tÃ¡s: Keressen meg minden runtime-spawned objektumot
+        // KeresÃ¼nk: Food, Landmine, BearTrap, DeerNPC komponenseket
+        var allFood = FindObjectsByType<FoodItem>(FindObjectsSortMode.None);
+        foreach (var food in allFood)
         {
-            if (mine.GetComponent<NetworkObject>().IsSpawned)
-                mine.GetComponent<NetworkObject>().Despawn();
+            if (food == null) continue;
+            var netObj = food.GetComponent<NetworkObject>();
+            if (netObj != null && netObj.IsSpawned)
+            {
+                netObj.Despawn(false);
+                despawnedCount++;
+                Debug.Log($"[LevelGenerator] Extra despawned: {food.gameObject.name}");
+            }
         }
 
-        BearTrap[] traps = FindObjectsOfType<BearTrap>();
-        foreach (var trap in traps)
+        var allMines = FindObjectsByType<Landmine>(FindObjectsSortMode.None);
+        foreach (var mine in allMines)
         {
-            if (trap.GetComponent<NetworkObject>().IsSpawned)
-                trap.GetComponent<NetworkObject>().Despawn();
+            if (mine == null) continue;
+            var netObj = mine.GetComponent<NetworkObject>();
+            if (netObj != null && netObj.IsSpawned)
+            {
+                netObj.Despawn(false);
+                despawnedCount++;
+                Debug.Log($"[LevelGenerator] Extra despawned: {mine.gameObject.name}");
+            }
         }
 
-        FoodItem[] foods = FindObjectsOfType<FoodItem>();
-        foreach (var food in foods)
+        var allTraps = FindObjectsByType<BearTrap>(FindObjectsSortMode.None);
+        foreach (var trap in allTraps)
         {
-            if (food.GetComponent<NetworkObject>().IsSpawned)
-                food.GetComponent<NetworkObject>().Despawn();
+            if (trap == null) continue;
+            var netObj = trap.GetComponent<NetworkObject>();
+            if (netObj != null && netObj.IsSpawned)
+            {
+                netObj.Despawn(false);
+                despawnedCount++;
+                Debug.Log($"[LevelGenerator] Extra despawned: {trap.gameObject.name}");
+            }
         }
 
-        DeerAIController[] npcs = FindObjectsOfType<DeerAIController>();
-        foreach (var npc in npcs)
+        // Szarvasok (csak NPC-k, nem Player!)
+        var allDeerNpc = FindObjectsByType<DeerAIController>(FindObjectsSortMode.None);
+        foreach (var deer in allDeerNpc)
         {
-            if (npc.GetComponent<NetworkObject>().IsSpawned)
-                npc.GetComponent<NetworkObject>().Despawn();
+            if (deer == null) continue;
+            var netObj = deer.GetComponent<NetworkObject>();
+            if (netObj != null && netObj.IsSpawned)
+            {
+                netObj.Despawn(false);
+                despawnedCount++;
+                Debug.Log($"[LevelGenerator] Extra despawned: {deer.gameObject.name}");
+            }
         }
+
+        Debug.Log($"[LevelGenerator] âœ… Ã–sszes objektum megtisztÃ­tva! Despawned: {despawnedCount} darab");
     }
 
     private void SpawnObjects(GameObject prefab, int count)

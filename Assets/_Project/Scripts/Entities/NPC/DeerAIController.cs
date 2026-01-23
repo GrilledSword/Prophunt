@@ -7,27 +7,28 @@ using Unity.Netcode.Components;
 [RequireComponent(typeof(NetworkAnimator))]
 public class DeerAIController : NetworkBehaviour
 {
-    [Header("Beállítások")]
+    [Header("Beï¿½llï¿½tï¿½sok")]
     [SerializeField] private float wanderRadius = 15f;
     [SerializeField] private float waitTimeMin = 2f;
     [SerializeField] private float waitTimeMax = 5f;
     [SerializeField] private float walkSpeed = 3.5f;
 
-    [Header("Evés Beállítások")]
+    [Header("Evï¿½s Beï¿½llï¿½tï¿½sok")]
     [SerializeField] private float eatTimeMin = 4f;
     [SerializeField] private float eatTimeMax = 10f;
 
-    [Header("Animáció")]
+    [Header("Animï¿½ciï¿½")]
     [SerializeField] private string speedParam = "Speed";
-    // --- MÓDOSÍTÁS KEZDETE ---
-    // Trigger helyett Bool paramétert használunk a folyamatos állapothoz
+    // --- Mï¿½DOSï¿½Tï¿½S KEZDETE ---
+    // Trigger helyett Bool paramï¿½tert hasznï¿½lunk a folyamatos ï¿½llapothoz
     [SerializeField] private string eatBool = "Eat";
-    // --- MÓDOSÍTÁS VÉGE ---
+    // --- Mï¿½DOSï¿½Tï¿½S Vï¿½GE ---
 
     private NavMeshAgent agent;
     private Animator animator;
     private float timer;
     private bool isEating = false;
+    private HealthComponent healthComponent;
 
     public override void OnNetworkSpawn()
     {
@@ -39,6 +40,7 @@ public class DeerAIController : NetworkBehaviour
 
         agent = GetComponent<NavMeshAgent>();
         animator = GetComponentInChildren<Animator>();
+        healthComponent = GetComponent<HealthComponent>();
 
         agent.speed = walkSpeed;
         timer = Random.Range(waitTimeMin, waitTimeMax);
@@ -49,6 +51,16 @@ public class DeerAIController : NetworkBehaviour
     private void Update()
     {
         if (!IsServer) return;
+
+        // [NEW] NPC halÃ¡l ellenÅ‘rzÃ©se
+        if (healthComponent != null && healthComponent.currentHealth.Value <= 0)
+        {
+            if (GetComponent<NetworkObject>() != null)
+            {
+                GetComponent<NetworkObject>().Despawn(false);
+            }
+            return;
+        }
 
         animator.SetFloat(speedParam, agent.velocity.magnitude);
 
@@ -93,19 +105,19 @@ public class DeerAIController : NetworkBehaviour
         isEating = true;
         agent.isStopped = true;
 
-        // --- MÓDOSÍTÁS KEZDETE ---
-        // Bekapcsoljuk az evés állapotot (Bool = true)
+        // --- Mï¿½DOSï¿½Tï¿½S KEZDETE ---
+        // Bekapcsoljuk az evï¿½s ï¿½llapotot (Bool = true)
         animator.SetBool(eatBool, true);
-        // --- MÓDOSÍTÁS VÉGE ---
+        // --- Mï¿½DOSï¿½Tï¿½S Vï¿½GE ---
 
         float currentEatTime = Random.Range(eatTimeMin, eatTimeMax);
 
         yield return new WaitForSeconds(currentEatTime);
 
-        // --- MÓDOSÍTÁS KEZDETE ---
-        // Letelt az idõ, kikapcsoljuk az evést (Bool = false)
+        // --- Mï¿½DOSï¿½Tï¿½S KEZDETE ---
+        // Letelt az idï¿½, kikapcsoljuk az evï¿½st (Bool = false)
         animator.SetBool(eatBool, false);
-        // --- MÓDOSÍTÁS VÉGE ---
+        // --- Mï¿½DOSï¿½Tï¿½S Vï¿½GE ---
 
         agent.isStopped = false;
         isEating = false;

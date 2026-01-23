@@ -5,17 +5,17 @@ using Unity.Netcode;
 public class HunterSanityAudio : NetworkBehaviour
 {
     [Header("Sanity Audio")]
-    [SerializeField] private AudioClip heartbeatClip; // Egy dobbanás hangja (vagy loop)
-    [SerializeField] private float startSanityThreshold = 50f; // 50% alatt kezdõdik
+    [SerializeField] private AudioClip heartbeatClip; // Egy dobbanï¿½s hangja (vagy loop)
+    [SerializeField] private float startSanityThreshold = 50f; // 50% alatt kezdï¿½dik
     [SerializeField] private float maxVolume = 1.0f;
-    [SerializeField] private float maxPitch = 1.5f; // Gyorsulás mértéke
+    [SerializeField] private float maxPitch = 1.5f; // Gyorsulï¿½s mï¿½rtï¿½ke
 
     private HealthComponent healthComponent;
     private AudioSource audioSource;
     private PlayerNetworkController playerController;
 
-    // Ha loop-os heartbeatet használsz
-    private bool isHeartbeatPlaying = false;
+    // Ha loop-os heartbeatet hasznï¿½lsz
+    //private bool isHeartbeatPlaying = false;
 
     public override void OnNetworkSpawn()
     {
@@ -33,10 +33,10 @@ public class HunterSanityAudio : NetworkBehaviour
 
     private void Update()
     {
-        // IsOwner ellenõrzés a szülõn keresztül
+        // IsOwner ellenï¿½rzï¿½s a szï¿½lï¿½n keresztï¿½l
         if (playerController == null || !playerController.IsOwner) return;
 
-        // Csak Vadásznak van Sanity effekt
+        // Csak Vadï¿½sznak van Sanity effekt
         if (!playerController.isHunter.Value)
         {
             if (audioSource.isPlaying) audioSource.Stop();

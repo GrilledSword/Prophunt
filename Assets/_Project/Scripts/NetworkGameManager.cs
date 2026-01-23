@@ -8,17 +8,12 @@ public class NetworkGameManager : NetworkBehaviour
 {
     public static NetworkGameManager Instance { get; private set; }
 
-    public enum GameState { Lobby, HunterRelease, InGame, HunterPanic, GameOver, MatchOver, EndGame }
+    public enum GameState { Lobby, HunterRelease, InGame, HunterPanic, GameOver, MatchOver }
     public NetworkVariable<GameState> currentGameState = new NetworkVariable<GameState>(GameState.Lobby);
     
     public NetworkVariable<bool> areTrapsActive = new NetworkVariable<bool>(false);
-
-    [Header("Kˆr EsÈlyek (0-100%)")]
-    [Tooltip("Sima kˆr esÈlye (csak kaja)")]
     [SerializeField] private int chanceNormal = 70;
-    [Tooltip("Akn·s kˆr esÈlye")]
     [SerializeField] private int chanceMines = 15;
-    [Tooltip("Csapd·s kˆr esÈlye")]
     [SerializeField] private int chanceTraps = 15;
 
     public NetworkVariable<int> hunterWins = new NetworkVariable<int>(0);
@@ -26,7 +21,6 @@ public class NetworkGameManager : NetworkBehaviour
     public NetworkVariable<int> targetWins = new NetworkVariable<int>(3);
 
     private ulong currentHunterId;
-
     public enum RoundType { Normal, Mines, Traps }
     public NetworkVariable<RoundType> currentRoundType = new NetworkVariable<RoundType>(RoundType.Normal);
 
@@ -40,60 +34,50 @@ public class NetworkGameManager : NetworkBehaviour
     }
     public void RegisterPlayer(ulong clientId, PlayerNetworkController playerScript)
     {
-        if (!connectedPlayers.ContainsKey(clientId))
-        {
-            connectedPlayers.Add(clientId, playerScript);
-        }
+        if (!connectedPlayers.ContainsKey(clientId)) connectedPlayers.Add(clientId, playerScript);
     }
-    private void OnClientDisconnect(ulong clientId)
-    {
-        if (IsServer)
-        {
-            if (connectedPlayers.ContainsKey(clientId))
-            {
-                connectedPlayers.Remove(clientId);
-            }
 
-            // [JAVÕT¡S] Ha j·tÈk kˆzben lÈp ki valaki, vÈge a meccsnek!
-            if (currentGameState.Value == GameState.InGame || currentGameState.Value == GameState.HunterRelease)
-            {
-                Debug.LogWarning($"Player {clientId} disconnected mid-game. Ending match.");
-
-                // …rtesÌtj¸k a tˆbbieket
-                EndGameClientRpc("DRAW - PLAYER DISCONNECTED");
-
-                // Vissza a Lobbyba kis kÈsleltetÈssel
-                StartCoroutine(ReturnToLobbyRoutine());
-            }
-        }
-    }
-    [ServerRpc]
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
     public void StartGameServerRpc()
     {
-        if (currentGameState.Value != GameState.Lobby) return;
-
-        areTrapsActive.Value = false;
-        AssignRoles();
-
+        if (!IsServer) return;
         currentGameState.Value = GameState.HunterRelease;
-    }
-    private void AssignRoles()
-    {
-        var clientIds = new List<ulong>(connectedPlayers.Keys);
-        if (clientIds.Count == 0) return;
+        SetGlobalDrain(false);
+        areTrapsActive.Value = false;
 
-        // VÈletlenszer˚ Hunter
-        int hunterIndex = Random.Range(0, clientIds.Count);
-        currentHunterId = clientIds[hunterIndex];
+        int totalWeight = chanceNormal + chanceMines + chanceTraps;
+        int randomVal = Random.Range(0, totalWeight);
 
-        foreach (var kvp in connectedPlayers)
+        if (randomVal < chanceNormal)
         {
-            bool isHunter = (kvp.Key == currentHunterId);
-            kvp.Value.isHunter.Value = isHunter;
-
-            // Mindenkinek resetelj¸k a HP-j·t Ès ·llapot·t kezdÈskor
-            kvp.Value.ResetPlayerStateClientRpc();
+            currentRoundType.Value = RoundType.Normal;
         }
+        else if (randomVal < chanceNormal + chanceMines)
+        {
+            currentRoundType.Value = RoundType.Mines;
+        }
+        else
+        {
+            currentRoundType.Value = RoundType.Traps;
+        }
+
+        if (LevelGenerator.Instance != null)
+        {
+            LevelGenerator.Instance.GenerateLevel(currentRoundType.Value);
+        }
+
+        List<ulong> clientIds = connectedPlayers.Keys.ToList();
+        if (clientIds.Count == 0) return;
+        ulong hunterId = clientIds[Random.Range(0, clientIds.Count)];
+
+        foreach (var player in connectedPlayers)
+        {
+            bool isHunter = (player.Key == hunterId);
+            player.Value.isHunter.Value = isHunter;
+            var health = player.Value.GetComponent<HealthComponent>();
+            if (health != null) health.isHunter = isHunter;
+        }
+        StartCoroutine(HunterReleaseRoutine());
     }
     private IEnumerator HunterReleaseRoutine()
     {
@@ -122,8 +106,20 @@ public class NetworkGameManager : NetworkBehaviour
             hunterScript.TransformToPanicModeClientRpc();
             if (allSafeZones.Count > 0)
             {
-                var sortedZones = allSafeZones.OrderByDescending(z => Vector3.Distance(z.transform.position, hunterScript.transform.position)).ToList();
-                sortedZones[0].SetActive(true);
+                // Optimize: Find the closest safe zone without OrderByDescending
+                SafeZone closestZone = allSafeZones[0];
+                float maxDistance = Vector3.Distance(closestZone.transform.position, hunterScript.transform.position);
+
+                for (int i = 1; i < allSafeZones.Count; i++)
+                {
+                    float distance = Vector3.Distance(allSafeZones[i].transform.position, hunterScript.transform.position);
+                    if (distance > maxDistance)
+                    {
+                        maxDistance = distance;
+                        closestZone = allSafeZones[i];
+                    }
+                }
+                closestZone.SetActive(true);
             }
         }
     }
@@ -139,7 +135,6 @@ public class NetworkGameManager : NetworkBehaviour
     [ServerRpc]
     public void EndGameServerRpc(bool hunterWon)
     {
-        // 1. Pontsz·m nˆvelÈs
         if (hunterWon) hunterWins.Value++;
         else deerWins.Value++;
 
@@ -149,26 +144,21 @@ public class NetworkGameManager : NetworkBehaviour
             GameSessionSettings.Instance.CurrentDeerScore = deerWins.Value;
         }
 
-        // 2. Ellenırizz¸k, vÈge-e a TELJES MECCSNEK?
         if (hunterWins.Value >= targetWins.Value || deerWins.Value >= targetWins.Value)
         {
             currentGameState.Value = GameState.MatchOver;
-
-            // Meccs vÈge -> Resetelj¸k a mentett pontokat 0-ra, 
-            // hogy ha visszalÈpnek a men¸be vagy ˙j meccset indÌtanak, tiszta lap legyen.
             if (GameSessionSettings.Instance != null)
             {
                 GameSessionSettings.Instance.ResetScores();
             }
 
-            string winner = hunterWon ? "VAD¡SZ" : "SZARVASOK";
+            string winner = hunterWon ? "VAD√ÅSZ" : "SZARVASOK";
             ShowMatchOverUIClientRpc(winner);
         }
         else
         {
-            // Sima kˆr vÈge
             currentGameState.Value = GameState.GameOver;
-            ShowWinUIClientRpc(hunterWon ? "K÷R NYERTESE: VAD¡SZ" : "K÷R NYERTESE: SZARVASOK");
+            ShowWinUIClientRpc(hunterWon ? "K√ñR NYERTESE: VAD√ÅSZ" : "K√ñR NYERTESE: SZARVASOK");
             StartCoroutine(RestartGameRoutine());
         }
     }
@@ -188,11 +178,46 @@ public class NetworkGameManager : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
-        if (IsServer)
+        hunterWins.OnValueChanged += OnScoreChanged;
+        deerWins.OnValueChanged += OnScoreChanged;
+
+        if (GameHUD.Instance != null)
+            GameHUD.Instance.UpdateScores(hunterWins.Value, deerWins.Value, targetWins.Value);
+
+        NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnected;
+
+        if (!IsServer) return;
+
+        // Register all connected clients
+        foreach (var client in NetworkManager.Singleton.ConnectedClientsList)
         {
-            NetworkManager.Singleton.OnClientDisconnectCallback += OnClientDisconnect;
-            currentGameState.Value = GameState.Lobby;
+            if (client.PlayerObject != null)
+            {
+                var playerScript = client.PlayerObject.GetComponent<PlayerNetworkController>();
+                if (playerScript != null)
+                {
+                    RegisterPlayer(client.ClientId, playerScript);
+                }
+            }
         }
+
+        // Initialize server-side game state
+        if (GameSessionSettings.Instance != null)
+        {
+            targetWins.Value = GameSessionSettings.Instance.TargetWins;
+            hunterWins.Value = GameSessionSettings.Instance.CurrentHunterScore;
+            deerWins.Value = GameSessionSettings.Instance.CurrentDeerScore;
+        }
+
+        currentGameState.Value = GameState.Lobby;
+        areTrapsActive.Value = false;
+        currentRoundType.Value = RoundType.Normal;
+
+        // Setup safe zones - Use FindObjectsByType for better performance
+        allSafeZones = FindObjectsByType<SafeZone>(FindObjectsSortMode.None).ToList();
+        foreach (var zone in allSafeZones) zone.SetActive(false);
+
+        ResetAllPlayersToLobbyState();
     }
     private void OnScoreChanged(int oldVal, int newVal)
     {
@@ -203,9 +228,9 @@ public class NetworkGameManager : NetworkBehaviour
     }
     public override void OnNetworkDespawn()
     {
-        if (IsServer && NetworkManager.Singleton != null)
+        if (NetworkManager.Singleton != null)
         {
-            NetworkManager.Singleton.OnClientDisconnectCallback -= OnClientDisconnect;
+            NetworkManager.Singleton.OnClientConnectedCallback -= OnClientConnected;
         }
     }
     private void OnClientConnected(ulong clientId)
@@ -226,42 +251,14 @@ public class NetworkGameManager : NetworkBehaviour
     public bool IsHunterRelease() => currentGameState.Value == GameState.HunterRelease;
     public void SetHunterFree()
     {
+        if (!IsServer) return;
         currentGameState.Value = GameState.InGame;
-        areTrapsActive.Value = true;
-    }
-    public void CheckWinCondition()
-    {
-        if (!IsServer) return;
-        if (currentGameState.Value != GameState.InGame) return;
-
-        // Sz·moljuk meg az Èlı szarvasokat
-        int aliveDeers = 0;
-        foreach (var kvp in connectedPlayers)
+        SetGlobalDrain(true);
+        EnableHuntersShootingClientRpc(true);
+        if (currentRoundType.Value != RoundType.Normal)
         {
-            // Ha NEM Hunter Ès Èl
-            if (!kvp.Value.isHunter.Value)
-            {
-                var health = kvp.Value.GetComponent<HealthComponent>();
-                if (health != null && health.currentHealth.Value > 0)
-                {
-                    aliveDeers++;
-                }
-            }
+            StartCoroutine(ArmTrapsRoutine());
         }
-
-        if (aliveDeers == 0)
-        {
-            EndMatch("HUNTER WINS!");
-        }
-    }
-    public void EndMatch(string winnerText)
-    {
-        if (!IsServer) return;
-
-        currentGameState.Value = GameState.EndGame;
-        EndGameClientRpc(winnerText);
-
-        StartCoroutine(ReturnToLobbyRoutine());
     }
     private void SetGlobalDrain(bool enabled)
     {
@@ -276,7 +273,8 @@ public class NetworkGameManager : NetworkBehaviour
     {
         SetGlobalDrain(false);
         areTrapsActive.Value = false;
-        if (LevelGenerator.Instance != null) LevelGenerator.Instance.ClearLevel();
+        // [REMOVED] ClearLevel() az GameLoopManager-ben h√≠v√≥dik meg, ne dupl√°z√≥djon!
+        
         foreach (var player in connectedPlayers.Values)
         {
             player.isHunter.Value = false;
@@ -292,22 +290,19 @@ public class NetworkGameManager : NetworkBehaviour
     }
     private IEnumerator ArmTrapsRoutine()
     {
-        yield return new WaitForSeconds(3f); // 3 mp kÈsleltetÈs
+        yield return new WaitForSeconds(3f);
 
         areTrapsActive.Value = true;
-
-        // [JAVÕT¡S] Pontos ¸zenet meghat·roz·sa
         string msg = "";
 
         switch (currentRoundType.Value)
         {
             case RoundType.Mines:
-                msg = "MINES ARMED! / AKN¡K …LESÕTVE!";
+                msg = "MINES ARMED! / AKN√ÅK √âLES√çTVE!";
                 break;
             case RoundType.Traps:
-                msg = "TRAPS ARMED! / CSAPD¡K …LESÕTVE!";
+                msg = "TRAPS ARMED! / CSAPD√ÅK √âLES√çTVE!";
                 break;
-                // Normal eset ide elvileg be se jut, de ha mÈgis, ¸res marad a msg
         }
 
         if (!string.IsNullOrEmpty(msg))
@@ -318,7 +313,8 @@ public class NetworkGameManager : NetworkBehaviour
     [ClientRpc]
     private void EnableHuntersShootingClientRpc(bool enabled)
     {
-        if (NetworkManager.Singleton.SpawnManager.GetLocalPlayerObject().TryGetComponent(out HunterShootingSystem shooting))
+        var localPlayer = NetworkManager.Singleton?.SpawnManager.GetLocalPlayerObject();
+        if (localPlayer != null && localPlayer.TryGetComponent(out HunterShootingSystem shooting))
         {
             shooting.EnableShooting(enabled);
         }
@@ -336,17 +332,8 @@ public class NetworkGameManager : NetworkBehaviour
     {
         if (GameHUD.Instance != null)
         {
-            // Csak a HOST l·ssa a gombokat, a tˆbbiek csak a feliratot
             bool isHost = IsServer;
             GameHUD.Instance.ShowMatchOverScreen(winnerTeam, isHost);
-        }
-    }
-    [ClientRpc]
-    private void EndGameClientRpc(string winnerText)
-    {
-        if (GameHUD.Instance != null)
-        {
-            GameHUD.Instance.ShowWinScreen(winnerText);
         }
     }
     public void LoadNextMap()
@@ -354,11 +341,8 @@ public class NetworkGameManager : NetworkBehaviour
         if (!IsServer) return;
 
         string nextSceneName = "";
-
-        // Ha Random be volt pip·lva, vagy "V·lt·s" a cÈl -> Sorsolunk ˙jat
         if (GameSessionSettings.Instance != null)
         {
-            // Sorsolunk egy p·ly·t (lehetıleg ne a mostanit)
             string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
             int attempts = 0;
             do
@@ -369,21 +353,12 @@ public class NetworkGameManager : NetworkBehaviour
         }
         else
         {
-            // Ha nem random, akkor is v·ltsunk? A kÈrÈs: "ha folytat·s akkor v·ltson map-t".
-            // Akkor is sorsoljunk egyet a list·bÛl.
-            nextSceneName = GameSessionSettings.Instance.GetRandomMap();
+            Debug.LogError("[NetworkGameManager] GameSessionSettings.Instance is null!");
+            return;
         }
 
         Debug.Log($"[MatchOver] Loading next map: {nextSceneName}");
         NetworkManager.Singleton.SceneManager.LoadScene(nextSceneName, UnityEngine.SceneManagement.LoadSceneMode.Single);
-    }
-    private IEnumerator ReturnToLobbyRoutine()
-    {
-        yield return new WaitForSeconds(5f); // 5 m·sodpercig mutatjuk az eredmÈnyt
-
-        // Scene ˙jratˆltÈse a szerveren (ez mindenkinÈl ˙jratˆlti)
-        // Fontos: A GameLoopManager OnSceneLoaded-je fogja kezelni az ˙jracsatlakoz·st
-        NetworkManager.Singleton.SceneManager.LoadScene("GameScene", UnityEngine.SceneManagement.LoadSceneMode.Single);
     }
 
 }

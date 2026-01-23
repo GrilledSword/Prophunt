@@ -11,7 +11,7 @@ public class GameLoopManager : NetworkBehaviour
     public enum LoadingState { WaitingForConnection, LoadingScene, InitializingMap, Ready }
     private LoadingState currentLoadingState = LoadingState.WaitingForConnection;
 
-    [Header("Idõzítés")]
+    [Header("Idï¿½zï¿½tï¿½s")]
     [SerializeField] private float lobbyTime = 10f;
     [SerializeField] private float hunterReleaseTime = 15f;
     [SerializeField] private int minPlayersToStart = 1;
@@ -47,14 +47,14 @@ public class GameLoopManager : NetworkBehaviour
     }
     public override void OnNetworkSpawn()
     {
-        // --- KLIENT OLDALI JAVÍTÁS ---
-        // Ha nem vagyunk szerver (tehát kliensek vagyunk), és épp most spawnoltunk le:
+        // --- KLIENT OLDALI JAVï¿½Tï¿½S ---
+        // Ha nem vagyunk szerver (tehï¿½t kliensek vagyunk), ï¿½s ï¿½pp most spawnoltunk le:
         if (!IsServer)
         {
-            // Azonnal ellenõrizzük, hogy el kell-e tüntetni a Loading Screent.
-            // Ha a NetworkGameManager már létezik (márpedig szinkronizálva van), és nem "Lobby"-ban vagyunk, vagy már készen van a pálya...
-            // Egyszerûbb logika: Ha ez a szkript fut a kliensen, az azt jelenti, hogy a Scene betöltött.
-            // Várunk egy kicsit a biztonság kedvéért, vagy elrejtjük, ha a játékállapot engedi.
+            // Azonnal ellenï¿½rizzï¿½k, hogy el kell-e tï¿½ntetni a Loading Screent.
+            // Ha a NetworkGameManager mï¿½r lï¿½tezik (mï¿½rpedig szinkronizï¿½lva van), ï¿½s nem "Lobby"-ban vagyunk, vagy mï¿½r kï¿½szen van a pï¿½lya...
+            // Egyszerï¿½bb logika: Ha ez a szkript fut a kliensen, az azt jelenti, hogy a Scene betï¿½ltï¿½tt.
+            // Vï¿½runk egy kicsit a biztonsï¿½g kedvï¿½ï¿½rt, vagy elrejtjï¿½k, ha a jï¿½tï¿½kï¿½llapot engedi.
             CheckClientLoadingScreen();
         }
 
@@ -77,21 +77,21 @@ public class GameLoopManager : NetworkBehaviour
 
         currentTimer.OnValueChanged += OnTimerChanged;
 
-        // Klienseknél figyeljük a Timer változást is, az jó jelzõ arra, hogy él a kapcsolat
+        // Klienseknï¿½l figyeljï¿½k a Timer vï¿½ltozï¿½st is, az jï¿½ jelzï¿½ arra, hogy ï¿½l a kapcsolat
         if (loadingScreenPanel != null) loadingScreenPanel.SetActive(true);
     }
     private void CheckClientLoadingScreen()
     {
-        // Ha már csatlakoztunk és megkaptuk a játékállapotot, és az nem 'Inaktív', akkor levehetjük a töltõképernyõt.
-        // Még jobb: Ha a NetworkGameManager szerint a játékállapot Lobby, InGame, vagy bármi 'élõ', akkor mehet.
+        // Ha mï¿½r csatlakoztunk ï¿½s megkaptuk a jï¿½tï¿½kï¿½llapotot, ï¿½s az nem 'Inaktï¿½v', akkor levehetjï¿½k a tï¿½ltï¿½kï¿½pernyï¿½t.
+        // Mï¿½g jobb: Ha a NetworkGameManager szerint a jï¿½tï¿½kï¿½llapot Lobby, InGame, vagy bï¿½rmi 'ï¿½lï¿½', akkor mehet.
         if (NetworkGameManager.Instance != null)
         {
-            // Ha már bejutottunk a Lobbyba vagy a Játékba, tüntesd el!
+            // Ha mï¿½r bejutottunk a Lobbyba vagy a Jï¿½tï¿½kba, tï¿½ntesd el!
             HideLoadingScreenClientRpc();
         }
         else
         {
-            // Ha még nincs NetworkGameManager (ritka), próbálkozzunk késõbb
+            // Ha mï¿½g nincs NetworkGameManager (ritka), prï¿½bï¿½lkozzunk kï¿½sï¿½bb
             StartCoroutine(WaitForGameState());
         }
     }
@@ -102,16 +102,16 @@ public class GameLoopManager : NetworkBehaviour
     }
     private void OnSceneLoaded(string sceneName, UnityEngine.SceneManagement.LoadSceneMode loadSceneMode, List<ulong> clientsCompleted, List<ulong> clientsTimedOut)
     {
-        if (NetworkManager.Singleton != null && !NetworkManager.Singleton.IsServer) return;
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
         areClientsLoaded = true;
         isSceneReloaded = true;
     }
     private void Update()
     {
-        // [ÚJ] Kliens oldali "Fail-safe": Ha véletlenül fent maradt a loading screen, de már megy a játék.
+        // [ï¿½J] Kliens oldali "Fail-safe": Ha vï¿½letlenï¿½l fent maradt a loading screen, de mï¿½r megy a jï¿½tï¿½k.
         if (!IsServer && loadingScreenPanel != null && loadingScreenPanel.activeSelf)
         {
-            // Ha már látjuk a Lobby UI-t, akkor a Loading Screen biztos nem kell.
+            // Ha mï¿½r lï¿½tjuk a Lobby UI-t, akkor a Loading Screen biztos nem kell.
             if (lobbyUI != null && lobbyUI.activeSelf)
             {
                 loadingScreenPanel.SetActive(false);
@@ -157,6 +157,14 @@ public class GameLoopManager : NetworkBehaviour
         if (isSceneReloaded && IsSpawned)
         {
             isSceneReloaded = false;
+            
+            // [NEW] TakarÃ­tÃ¡s az Ãºj kÃ¶r elÅ‘tt
+            if (LevelGenerator.Instance != null)
+            {
+                LevelGenerator.Instance.ClearLevel();
+                Debug.Log("[GameLoop] PÃ¡lya megtisztÃ­tva az Ãºj kÃ¶r elÅ‘tt!");
+            }
+            
             ResetUIClientRpc();
             if (NetworkGameManager.Instance != null)
                 NetworkGameManager.Instance.currentGameState.Value = NetworkGameManager.GameState.Lobby;
@@ -195,16 +203,16 @@ public class GameLoopManager : NetworkBehaviour
         {
             currentTimer.Value -= Time.deltaTime;
 
-            // [JAVÍTÁS] Ha lejárt a Release Timer
+            // [JAVï¿½Tï¿½S] Ha lejï¿½rt a Release Timer
             if (currentTimer.Value <= 0f)
             {
-                currentTimer.Value = 0f; // Biztos ami biztos nullázzuk
+                currentTimer.Value = 0f; // Biztos ami biztos nullï¿½zzuk
                 isReleaseTimerRunning = false;
 
                 MoveHunterToOutside();
                 NetworkGameManager.Instance.SetHunterFree();
 
-                // [JAVÍTÁS] Kényszerítjük a UI eltüntetését mindenkinél, mert a Timer 0 értéke önmagában már nem teszi meg
+                // [JAVï¿½Tï¿½S] Kï¿½nyszerï¿½tjï¿½k a UI eltï¿½ntetï¿½sï¿½t mindenkinï¿½l, mert a Timer 0 ï¿½rtï¿½ke ï¿½nmagï¿½ban mï¿½r nem teszi meg
                 ClearTimerUIClientRpc();
             }
         }
@@ -276,7 +284,7 @@ public class GameLoopManager : NetworkBehaviour
     {
         if (GameHUD.Instance == null) return;
 
-        // [JAVÍTÁS] Finomított logika
+        // [JAVï¿½Tï¿½S] Finomï¿½tott logika
         if (newVal > 0)
         {
             bool isReleasePhase = false;
@@ -286,15 +294,15 @@ public class GameLoopManager : NetworkBehaviour
             string prefix = isReleasePhase ? "RELEASE: " : "START: ";
             string colorHex = isReleasePhase ? "<color=red>" : "<color=white>";
 
-            // Csak akkor írjuk ki, ha nem Waiting szövegnek kellene lennie
-            // De mivel a Waiting szöveg RPC-vel jön, itt egyszerûen felülírjuk, ha van Timer
+            // Csak akkor ï¿½rjuk ki, ha nem Waiting szï¿½vegnek kellene lennie
+            // De mivel a Waiting szï¿½veg RPC-vel jï¿½n, itt egyszerï¿½en felï¿½lï¿½rjuk, ha van Timer
             GameHUD.Instance.UpdateTimer($"{colorHex}{prefix}{Mathf.CeilToInt(newVal)}</color>");
         }
         else
         {
-            // Ha a Timer 0, két eset van:
-            // 1. Lobbyban vagyunk és várunk -> Ezt az UpdateWaitingUIClientRpc kezeli, NE töröljük
-            // 2. HunterRelease vége (InGame eleje) -> Ezt törölni KELL.
+            // Ha a Timer 0, kï¿½t eset van:
+            // 1. Lobbyban vagyunk ï¿½s vï¿½runk -> Ezt az UpdateWaitingUIClientRpc kezeli, NE tï¿½rï¿½ljï¿½k
+            // 2. HunterRelease vï¿½ge (InGame eleje) -> Ezt tï¿½rï¿½lni KELL.
 
             if (NetworkGameManager.Instance != null &&
                 NetworkGameManager.Instance.currentGameState.Value == NetworkGameManager.GameState.HunterRelease)

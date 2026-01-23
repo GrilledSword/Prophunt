@@ -9,7 +9,7 @@ using static NetworkGameManager;
 [RequireComponent(typeof(AudioSource))]
 public class PlayerNetworkController : NetworkBehaviour
 {
-    [Header("Mozgás Beállítások")]
+    [Header("Mozgï¿½s Beï¿½llï¿½tï¿½sok")]
     [SerializeField] private float hunterWalkSpeed = 5f;
     [SerializeField] private float hunterSprintSpeed = 9f;
     [SerializeField] private float deerWalkSpeed = 6f;
@@ -23,21 +23,22 @@ public class PlayerNetworkController : NetworkBehaviour
     [SerializeField] private float dashForce = 20f;
     [SerializeField] private float dashDuration = 0.2f;
     [SerializeField] private float dashCooldown = 3f;
+    [SerializeField] private float dashJumpForce = 15f; // UgrÃ¡s komponens
 
-    [Header("Kamera Beállítások")]
+    [Header("Kamera Beï¿½llï¿½tï¿½sok")]
     [SerializeField] private float mouseSensitivity = 0.5f;
     [SerializeField] private float tpsCameraDistance = 4.0f;
     [SerializeField] private Vector2 pitchLimits = new Vector2(-70f, 80f);
 
-    [Header("Kamera Stabilizátor (FPS)")]
-    [SerializeField] private bool useStabilizer = true; // Kapcsoló
+    [Header("Kamera Stabilizï¿½tor (FPS)")]
+    [SerializeField] private bool useStabilizer = true; // Kapcsolï¿½
     [SerializeField] private float posLerpSpeed = 15f;
 
-    [Header("Harc Beállítások (Hunter)")]
-    [SerializeField] private float reloadTime = 0.1f; // Mennyi ideig tart az új nyíl elõvétele
-    [SerializeField] private float shootAnimDuration = 0.1f; // Mennyi idõ a lövés animáció
+    [Header("Harc Beï¿½llï¿½tï¿½sok (Hunter)")]
+    [SerializeField] private float reloadTime = 0.1f; // Mennyi ideig tart az ï¿½j nyï¿½l elï¿½vï¿½tele
+    [SerializeField] private float shootAnimDuration = 0.1f; // Mennyi idï¿½ a lï¿½vï¿½s animï¿½ciï¿½
 
-    [Header("Audio & Animáció")]
+    [Header("Audio & Animï¿½ciï¿½")]
     private Animator animator;
 
     [Header("Animation Fix")]
@@ -57,6 +58,7 @@ public class PlayerNetworkController : NetworkBehaviour
     public NetworkVariable<bool> isHunter = new NetworkVariable<bool>(false);
     private NetworkVariable<bool> isAimingNetworked = new NetworkVariable<bool>(false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
     private NetworkVariable<bool> isMimicEating = new NetworkVariable<bool>(false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+    private NetworkVariable<bool> isDeerEvilMode = new NetworkVariable<bool>(false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server); // [NEW] Evil/Panic mÃ³d
 
     private CharacterController characterController;
     private HealthComponent healthComponent;
@@ -77,7 +79,7 @@ public class PlayerNetworkController : NetworkBehaviour
     private bool isUIConnected = false;
     private bool isPanicMode = false;
 
-    // [ADDED] Új állapotjelzõk a mozgás korlátozásához
+    // [ADDED] ï¿½j ï¿½llapotjelzï¿½k a mozgï¿½s korlï¿½tozï¿½sï¿½hoz
     private bool isAiming = false;
     private bool isReloading = false;
 
@@ -93,6 +95,9 @@ public class PlayerNetworkController : NetworkBehaviour
     private int animIDShoot;
     private int animIDReload;
     private int animIDAiming; // [ADDED]
+    private int animIDDash;   // [ADDED] Dash anim
+    private int animIDDeerAttack; // [ADDED] Szarvas tÃ¡madÃ¡s anim
+    private int animIDIsEvilDeer; // [NEW] Evil mÃ³d BlendTree vÃ¡ltÃ¡shoz
 
 
     public override void OnNetworkSpawn()
@@ -113,6 +118,9 @@ public class PlayerNetworkController : NetworkBehaviour
         animIDShoot = Animator.StringToHash("Shoot");
         animIDReload = Animator.StringToHash("IsReloading");
         animIDAiming = Animator.StringToHash("IsAiming");
+        animIDDash = Animator.StringToHash("Dash");
+        animIDDeerAttack = Animator.StringToHash("DeerAttack");
+        animIDIsEvilDeer = Animator.StringToHash("IsEvilDeer");
 
         if (healthComponent != null) healthComponent.isHunter = isHunter.Value;
 
@@ -133,10 +141,20 @@ public class PlayerNetworkController : NetworkBehaviour
         isHunter.OnValueChanged += OnRoleChanged;
         isMimicEating.OnValueChanged += OnMimicEatingChanged;
 
-        // [ÚJ] Figyeljük a változást, hogy azonnal frissüljön az animáció
+        // [ï¿½J] Figyeljï¿½k a vï¿½ltozï¿½st, hogy azonnal frissï¿½ljï¿½n az animï¿½ciï¿½
         isAimingNetworked.OnValueChanged += OnAimingStateChanged;
+        isDeerEvilMode.OnValueChanged += OnDeerEvilModeChanged; // [NEW] Evil mÃ³d figyelÃ©se
 
         UpdateVisuals(isHunter.Value);
+    }
+    private void OnDeerEvilModeChanged(bool previous, bool current)
+    {
+        // Szarvasok BlendTree vÃ¡ltÃ¡sa
+        if (animator != null && !isHunter.Value)
+        {
+            animator.SetBool(animIDIsEvilDeer, current);
+            Debug.Log($"[PlayerNetworkController] Szarvas mÃ³d: {(current ? "Evil/Panic" : "Normal")}");
+        }
     }
     private void OnAimingStateChanged(bool previous, bool current)
     {
@@ -181,7 +199,15 @@ public class PlayerNetworkController : NetworkBehaviour
         {
             healthComponent.currentHealth.OnValueChanged -= OnHealthChanged;
         }
-        isMimicEating.OnValueChanged -= OnMimicEatingChanged;
+        if (isMimicEating != null)
+            isMimicEating.OnValueChanged -= OnMimicEatingChanged;
+        if (isAimingNetworked != null)
+            isAimingNetworked.OnValueChanged -= OnAimingStateChanged;
+        if (isDeerEvilMode != null)
+            isDeerEvilMode.OnValueChanged -= OnDeerEvilModeChanged; // [NEW]
+        if (isHunter != null)
+            isHunter.OnValueChanged -= OnRoleChanged;
+        
         base.OnNetworkDespawn();
     }
     private void OnRoleChanged(bool previous, bool current)
@@ -196,19 +222,12 @@ public class PlayerNetworkController : NetworkBehaviour
     }
     private void UpdateVisuals(bool hunterParams)
     {
-        if (IsOwner)
-        {
-            if (hunterModel) hunterModel.SetActive(hunterParams);
-            if (deerModel) deerModel.SetActive(!hunterParams);
-        }
-        else
-        {
-            if (hunterModel) hunterModel.SetActive(hunterParams);
-            if (deerModel) deerModel.SetActive(!hunterParams);
-        }
+        // Single conditional structure instead of duplicate if-else
+        if (hunterModel != null) hunterModel.SetActive(hunterParams);
+        if (deerModel != null) deerModel.SetActive(!hunterParams);
 
+        // Get animator from the active model
         GameObject targetModel = hunterParams ? hunterModel : deerModel;
-
         if (targetModel != null)
         {
             animator = targetModel.GetComponentInChildren<Animator>(true);
@@ -216,7 +235,7 @@ public class PlayerNetworkController : NetworkBehaviour
     }
     private void Update()
     {
-        // [JAVÍTÁS] Szétválasztottuk az Update logikát.
+        // [JAVï¿½Tï¿½S] Szï¿½tvï¿½lasztottuk az Update logikï¿½t.
         // A HandleAnimations MINDENKINEK lefut, nem csak az Ownernek!
 
         if (IsOwner)
@@ -224,7 +243,7 @@ public class PlayerNetworkController : NetworkBehaviour
             HandleOwnerLogic();
         }
 
-        // [JAVÍTÁS] Animációt mindenki frissít (Owner és Proxy is)
+        // [JAVï¿½Tï¿½S] Animï¿½ciï¿½t mindenki frissï¿½t (Owner ï¿½s Proxy is)
         CalculateNetworkVelocity();
         HandleAnimations();
     }
@@ -236,7 +255,7 @@ public class PlayerNetworkController : NetworkBehaviour
         if (isTrapped) { HandleTrapEscape(); return; }
 
         HandleInteractionInput();
-        HandleInput(); // Mozgás input (WASD)
+        HandleInput(); // Mozgï¿½s input (WASD)
 
         if (isHunter.Value)
         {
@@ -255,16 +274,16 @@ public class PlayerNetworkController : NetworkBehaviour
     {
         if (IsOwner)
         {
-            // Ownernél a CharacterController pontos értéket ad
+            // Ownernï¿½l a CharacterController pontos ï¿½rtï¿½ket ad
             calculatedSpeed = new Vector3(characterController.velocity.x, 0, characterController.velocity.z).magnitude;
         }
         else
         {
-            // Proxyknál (akiket a hálózat mozgat) a pozíció változásából számolunk
+            // Proxyknï¿½l (akiket a hï¿½lï¿½zat mozgat) a pozï¿½ciï¿½ vï¿½ltozï¿½sï¿½bï¿½l szï¿½molunk
             Vector3 currentPos = transform.position;
             float dist = Vector3.Distance(new Vector3(currentPos.x, 0, currentPos.z), new Vector3(lastPosition.x, 0, lastPosition.z));
 
-            // Ha a delta idõ nagyon kicsi, 0-val osztanánk, ezt kerüljük el
+            // Ha a delta idï¿½ nagyon kicsi, 0-val osztanï¿½nk, ezt kerï¿½ljï¿½k el
             if (Time.deltaTime > 0.0001f)
             {
                 calculatedSpeed = dist / Time.deltaTime;
@@ -281,32 +300,32 @@ public class PlayerNetworkController : NetworkBehaviour
     {
         bool canCombat = true;
 
-        // 1. Általános GameState ellenõrzés
+        // 1. ï¿½ltalï¿½nos GameState ellenï¿½rzï¿½s
         if (NetworkGameManager.Instance != null && NetworkGameManager.Instance.currentGameState.Value != GameState.InGame)
             canCombat = false;
 
-        // 2. [JAVÍTÁS] Specifikus Pánik ellenõrzés
-        // Ha Pánik mód van, akkor NINCS harc, pont.
+        // 2. [JAVï¿½Tï¿½S] Specifikus Pï¿½nik ellenï¿½rzï¿½s
+        // Ha Pï¿½nik mï¿½d van, akkor NINCS harc, pont.
         if (isPanicMode) canCombat = false;
 
         if (!canCombat)
         {
-            // Fail-safe: Ha valahogy mégis TRUE maradt a hálózati változó (pl. lag miatt),
-            // és mi vagyunk a tulajok, akkor kényszerítjük a FALSE-t.
+            // Fail-safe: Ha valahogy mï¿½gis TRUE maradt a hï¿½lï¿½zati vï¿½ltozï¿½ (pl. lag miatt),
+            // ï¿½s mi vagyunk a tulajok, akkor kï¿½nyszerï¿½tjï¿½k a FALSE-t.
             if (IsOwner && isAimingNetworked.Value)
             {
                 SetAimingServerRpc(false);
             }
-            return; // Itt azonnal kilépünk, így az Input le se fut!
+            return; // Itt azonnal kilï¿½pï¿½nk, ï¿½gy az Input le se fut!
         }
 
-        // --- INNEN CSAK AKKOR FUT LE, HA MINDEN OKÉ (Nincs Pánik) ---
+        // --- INNEN CSAK AKKOR FUT LE, HA MINDEN OKï¿½ (Nincs Pï¿½nik) ---
 
         if (Mouse.current != null && !isReloading)
         {
             bool rightClickHeld = Mouse.current.rightButton.isPressed;
 
-            // Ha változott az input állapota, jelezzük a szervernek
+            // Ha vï¿½ltozott az input ï¿½llapota, jelezzï¿½k a szervernek
             if (isAimingNetworked.Value != rightClickHeld)
             {
                 SetAimingServerRpc(rightClickHeld);
@@ -314,7 +333,7 @@ public class PlayerNetworkController : NetworkBehaviour
         }
         else if (isReloading && isAimingNetworked.Value)
         {
-            // Ha töltünk, nem célozhatunk
+            // Ha tï¿½ltï¿½nk, nem cï¿½lozhatunk
             SetAimingServerRpc(false);
         }
 
@@ -328,7 +347,7 @@ public class PlayerNetworkController : NetworkBehaviour
         var shootingSystem = GetComponent<HunterShootingSystem>();
         if (shootingSystem != null) shootingSystem.TryShoot();
 
-        // A Shoot Trigger egy "esemény", azt RPC-vel küldjük át, hogy mindenki lejátssza
+        // A Shoot Trigger egy "esemï¿½ny", azt RPC-vel kï¿½ldjï¿½k ï¿½t, hogy mindenki lejï¿½tssza
         TriggerShootAnimServerRpc();
 
         StartCoroutine(ReloadSequence());
@@ -354,7 +373,7 @@ public class PlayerNetworkController : NetworkBehaviour
         {
             if (isHunter.Value)
             {
-                // [JAVÍTÁS] Most már a hálózati változót nézzük!
+                // [JAVï¿½Tï¿½S] Most mï¿½r a hï¿½lï¿½zati vï¿½ltozï¿½t nï¿½zzï¿½k!
                 if (isAimingNetworked.Value) animSpeed = 1f;
                 else animSpeed = (calculatedSpeed > hunterWalkSpeed + 1f) ? 2f : 1f;
             }
@@ -374,7 +393,7 @@ public class PlayerNetworkController : NetworkBehaviour
     }
     public void SetReloadAnim(bool reloading)
     {
-        isReloading = reloading; // Ez blokkolja majd a mozgást a GetCurrentSpeed-ben
+        isReloading = reloading; // Ez blokkolja majd a mozgï¿½st a GetCurrentSpeed-ben
 
         if (animator != null && isHunter.Value)
         {
@@ -393,6 +412,7 @@ public class PlayerNetworkController : NetworkBehaviour
     private void HandleMimicEating()
     {
         if (isHunter.Value) return;
+        if (isPanicMode) return; // PÃ¡nik mÃ³dban nem lehet enni
 
         bool isHoldingE = Keyboard.current.eKey.isPressed;
 
@@ -414,6 +434,53 @@ public class PlayerNetworkController : NetworkBehaviour
         if (!IsOwner) return;
         if (sceneCamera == null) sceneCamera = Camera.main;
         if (sceneCamera != null) UpdateCameraPosition();
+        
+        // Szarvas Ã¼tkÃ¶zÃ©s detektÃ¡lÃ¡sa Panic mÃ³dban
+        if (!isHunter.Value && isPanicMode && characterController.isGrounded)
+        {
+            CheckDeerPanicCollisions();
+        }
+    }
+    private void CheckDeerPanicCollisions()
+    {
+        // CSAK pÃ¡nik mÃ³dban lehet tÃ¡madni
+        if (!isPanicMode) return;
+        
+        // Kis sugÃ¡rral kÃ¶rÃ¼l nÃ©zÃ¼nk, hogy talÃ¡lunk-e vadÃ¡szt
+        Collider[] hitColliders = Physics.OverlapSphere(transform.position, 2f);
+        
+        foreach (var collider in hitColliders)
+        {
+            if (collider.CompareTag("Player"))
+            {
+                var otherPlayer = collider.GetComponent<PlayerNetworkController>();
+                if (otherPlayer != null && otherPlayer.isHunter.Value)
+                {
+                    // MegtÃ¡madunk egy vadÃ¡szt (CSAK pÃ¡nik mÃ³dban!)
+                    AttackHunterServerRpc(otherPlayer.NetworkObjectId);
+                }
+            }
+        }
+    }
+    [ServerRpc]
+    private void AttackHunterServerRpc(ulong hunterNetId)
+    {
+        // CSAK pÃ¡nik mÃ³dban lehet tÃ¡madni!
+        if (!NetworkGameManager.Instance.IsHunterPanic()) return;
+        if (isHunter.Value) return; // Szarvasok tÃ¡madnak, nem hunterek
+        
+        if (NetworkManager.Singleton.SpawnManager.SpawnedObjects.TryGetValue(hunterNetId, out NetworkObject hunterObj))
+        {
+            var hunterHealth = hunterObj.GetComponent<HealthComponent>();
+            if (hunterHealth != null && hunterHealth.isHunter)
+            {
+                hunterHealth.ModifyHealth(-25f); // 25 sebzÃ©s
+                Debug.Log($"[PlayerNetworkController] Szarvas megtÃ¡madott egy vadÃ¡szt!");
+                
+                // SzinkronizÃ¡ljuk a tÃ¡madÃ¡s animÃ¡ciÃ³t minden kliens szÃ¡mÃ¡ra
+                TriggerDeerAttackAnimClientRpc();
+            }
+        }
     }
     private void UpdateCameraPosition()
     {
@@ -424,33 +491,33 @@ public class PlayerNetworkController : NetworkBehaviour
 
         if (useFps)
         {
-            // FPS MÓD (Itt kell a stabilizátor)
+            // FPS Mï¿½D (Itt kell a stabilizï¿½tor)
             if (useStabilizer)
             {
-                // 1. Pozíció: Lerp-eljük, hogy a kis rázkódásokat kisimítsuk
+                // 1. Pozï¿½ciï¿½: Lerp-eljï¿½k, hogy a kis rï¿½zkï¿½dï¿½sokat kisimï¿½tsuk
                 sceneCamera.transform.position = Vector3.Lerp(
                     sceneCamera.transform.position,
                     targetMount.position,
                     Time.deltaTime * posLerpSpeed
                 );
 
-                // 2. Rotáció: EZ A TITOK!
-                // NEM vesszük át a targetMount.rotation-t (mert az a fejcsonttal együtt rázkódik).
-                // Helyette a tiszta Input alapú rotációt használjuk (CameraPitch + Test Yaw).
-                // Így a fej mozoghat alattunk, de a kamera stabil marad, mint egy igazi FPS-ben.
+                // 2. Rotï¿½ciï¿½: EZ A TITOK!
+                // NEM vesszï¿½k ï¿½t a targetMount.rotation-t (mert az a fejcsonttal egyï¿½tt rï¿½zkï¿½dik).
+                // Helyette a tiszta Input alapï¿½ rotï¿½ciï¿½t hasznï¿½ljuk (CameraPitch + Test Yaw).
+                // ï¿½gy a fej mozoghat alattunk, de a kamera stabil marad, mint egy igazi FPS-ben.
                 Quaternion stableRotation = Quaternion.Euler(cameraPitch, transform.eulerAngles.y, 0f);
                 sceneCamera.transform.rotation = stableRotation;
             }
             else
             {
-                // Régi, "kemény" kötés (rázkódós)
+                // Rï¿½gi, "kemï¿½ny" kï¿½tï¿½s (rï¿½zkï¿½dï¿½s)
                 sceneCamera.transform.position = targetMount.position;
                 sceneCamera.transform.rotation = targetMount.rotation;
             }
         }
         else
         {
-            // TPS MÓD (Szarvas / Pánik) - Itt maradhat a régi logika
+            // TPS Mï¿½D (Szarvas / Pï¿½nik) - Itt maradhat a rï¿½gi logika
             Vector3 targetPos = targetMount.position - (targetMount.forward * tpsCameraDistance);
             sceneCamera.transform.position = targetPos;
             sceneCamera.transform.rotation = targetMount.rotation;
@@ -466,7 +533,7 @@ public class PlayerNetworkController : NetworkBehaviour
                             Keyboard.current.dKey.ReadValue() * Vector2.right;
             moveInput = input.normalized;
 
-            if (!isHunter.Value && Keyboard.current.leftAltKey.wasPressedThisFrame)
+            if (!isHunter.Value && !isPanicMode && Keyboard.current.leftAltKey.wasPressedThisFrame)
             {
                 TryDash();
             }
@@ -480,6 +547,9 @@ public class PlayerNetworkController : NetworkBehaviour
             isDashing = true;
             dashEndTime = Time.time + dashDuration;
             lastDashTime = Time.time;
+            
+            // SzinkronizÃ¡ljuk a Dash animÃ¡ciÃ³t
+            TriggerDashAnimServerRpc();
         }
     }
     private void MoveHunter()
@@ -490,7 +560,7 @@ public class PlayerNetworkController : NetworkBehaviour
         float speed = GetCurrentSpeed();
         Vector3 move = transform.right * moveInput.x + transform.forward * moveInput.y;
 
-        // Ha a sebesség 0 (pl. töltés miatt), a move vektor is nullázódik
+        // Ha a sebessï¿½g 0 (pl. tï¿½ltï¿½s miatt), a move vektor is nullï¿½zï¿½dik
         characterController.Move(move * speed * Time.deltaTime);
     }
     private void MoveDeer()
@@ -510,7 +580,12 @@ public class PlayerNetworkController : NetworkBehaviour
                     float targetAngle = Mathf.Atan2(moveInput.x, moveInput.y) * Mathf.Rad2Deg + sceneCamera.transform.eulerAngles.y;
                     dashDir = Quaternion.Euler(0f, targetAngle, 0f) * Vector3.forward;
                 }
+                // HorizontÃ¡lis mozgÃ¡s
                 characterController.Move(dashDir * dashForce * Time.deltaTime);
+                
+                // VertikÃ¡lis komponens (ugrÃ¡s/vetÅ‘dÃ©s)
+                velocity.y = dashJumpForce;
+                characterController.Move(velocity * Time.deltaTime);
                 return;
             }
             else isDashing = false;
@@ -527,8 +602,8 @@ public class PlayerNetworkController : NetworkBehaviour
     }
     private float GetCurrentSpeed()
     {
-        // 1. Pánik mód felülbírál mindent -> MAX SEBESSÉG
-        // Fontos: Itt már nem érdekel minket, hogy céloz-e a játékos, mert a Pánik felülírja.
+        // 1. Pï¿½nik mï¿½d felï¿½lbï¿½rï¿½l mindent -> MAX SEBESSï¿½G
+        // Fontos: Itt mï¿½r nem ï¿½rdekel minket, hogy cï¿½loz-e a jï¿½tï¿½kos, mert a Pï¿½nik felï¿½lï¿½rja.
         if (isPanicMode) return hunterSprintSpeed;
 
         if (isHunter.Value && isReloading) return 0f;
@@ -537,7 +612,7 @@ public class PlayerNetworkController : NetworkBehaviour
 
         if (isHunter.Value)
         {
-            // Ha nincs pánik, és célzunk, akkor lassú séta
+            // Ha nincs pï¿½nik, ï¿½s cï¿½lzunk, akkor lassï¿½ sï¿½ta
             if (isAimingNetworked.Value) return hunterWalkSpeed;
 
             if (isSprinting && moveInput.magnitude > 0 && healthComponent.currentHealth.Value > 5f)
@@ -569,7 +644,7 @@ public class PlayerNetworkController : NetworkBehaviour
 
         transform.Rotate(Vector3.up * mouseX);
 
-        // Ez forgatja a fegyvert/kart a modellen (vizuális), de a kamera már a "Matek"-ot követi fentrõl
+        // Ez forgatja a fegyvert/kart a modellen (vizuï¿½lis), de a kamera mï¿½r a "Matek"-ot kï¿½veti fentrï¿½l
         if (fpsMount != null && !isPanicMode)
             fpsMount.localRotation = Quaternion.Euler(cameraPitch, 0f, 0f);
 
@@ -627,7 +702,7 @@ public class PlayerNetworkController : NetworkBehaviour
         if (Keyboard.current.spaceKey.wasPressedThisFrame)
         {
             currentTrapPresses++;
-            Debug.Log($"Szabadulás: {currentTrapPresses}/{trapEscapePressesNeeded}");
+            Debug.Log($"Szabadulï¿½s: {currentTrapPresses}/{trapEscapePressesNeeded}");
 
             if (currentTrapPresses >= trapEscapePressesNeeded)
             {
@@ -676,14 +751,26 @@ public class PlayerNetworkController : NetworkBehaviour
     [ServerRpc]
     private void SetReloadAnimServerRpc(bool reloading)
     {
-        // Használhatnánk NetworkVariable-t is, de az animátor paraméter szinkronhoz most jó a ClientRpc is,
-        // vagy frissíthetnénk egy NetworkVariable-t. Maradjunk az RPC-nél az egyszerûség kedvéért.
+        // Hasznï¿½lhatnï¿½nk NetworkVariable-t is, de az animï¿½tor paramï¿½ter szinkronhoz most jï¿½ a ClientRpc is,
+        // vagy frissï¿½thetnï¿½nk egy NetworkVariable-t. Maradjunk az RPC-nï¿½l az egyszerï¿½sï¿½g kedvï¿½ï¿½rt.
         SetReloadAnimClientRpc(reloading);
     }
     [ServerRpc]
     private void RequestUntrapServerRpc()
     {
         SetTrappedClientRpc(false);
+    }
+    [ServerRpc]
+    private void TriggerDashAnimServerRpc()
+    {
+        // SzinkronizÃ¡ljuk a Dash animÃ¡ciÃ³t minden kliensnek
+        TriggerDashAnimClientRpc();
+    }
+    [ServerRpc]
+    private void SetDeerEvilModeServerRpc(bool isEvil)
+    {
+        // [NEW] SzinkronizÃ¡ljuk a BlendTree mÃ³dot
+        isDeerEvilMode.Value = isEvil;
     }
 
 
@@ -700,7 +787,7 @@ public class PlayerNetworkController : NetworkBehaviour
     {
         if (!IsOwner) return;
 
-        Debug.Log("Spectator Mód Aktiválva!");
+        Debug.Log("Spectator Mï¿½d Aktivï¿½lva!");
         isGhost = true;
 
         if (characterController != null) characterController.enabled = false;
@@ -717,23 +804,23 @@ public class PlayerNetworkController : NetworkBehaviour
         isPanicMode = true;
         hunterSprintCost = 0f;
 
-        // [JAVÍTÁS] Kényszerített reset (Kill Switch)
-        // Azonnal leállítjuk a helyi állapotokat
+        // [JAVï¿½Tï¿½S] Kï¿½nyszerï¿½tett reset (Kill Switch)
+        // Azonnal leï¿½llï¿½tjuk a helyi ï¿½llapotokat
         isReloading = false;
 
-        // Animátor takarítás azonnal (hogy ne maradjon vizuálisan beragadva)
+        // Animï¿½tor takarï¿½tï¿½s azonnal (hogy ne maradjon vizuï¿½lisan beragadva)
         if (animator != null)
         {
             animator.SetBool(animIDAiming, false);
             animator.SetBool(animIDReload, false);
-            // Opcionális: Ha van "Equip" vagy hasonló layer, azt is resetelni kellene
+            // Opcionï¿½lis: Ha van "Equip" vagy hasonlï¿½ layer, azt is resetelni kellene
         }
 
-        // Ha mi vagyunk a tulajdonosok, közölnünk kell a hálózattal is, hogy "befejeztem a célzást"
-        // Ez oldja meg a beragadást, ha nyomva tartod a gombot
+        // Ha mi vagyunk a tulajdonosok, kï¿½zï¿½lnï¿½nk kell a hï¿½lï¿½zattal is, hogy "befejeztem a cï¿½lzï¿½st"
+        // Ez oldja meg a beragadï¿½st, ha nyomva tartod a gombot
         if (IsOwner)
         {
-            // Csak akkor küldünk RPC-t, ha a hálózati változó szerint még célzunk
+            // Csak akkor kï¿½ldï¿½nk RPC-t, ha a hï¿½lï¿½zati vï¿½ltozï¿½ szerint mï¿½g cï¿½lzunk
             if (isAimingNetworked.Value)
             {
                 SetAimingServerRpc(false);
@@ -741,6 +828,22 @@ public class PlayerNetworkController : NetworkBehaviour
         }
 
         UpdateVisuals(isHunter.Value);
+        
+        // ===== [NEW] SZARVASOK PANIC MODE-BAN =====
+        if (!isHunter.Value)
+        {
+            // Szarvasok "szarvakkal felszerelt" modelÃ© vÃ¡lnak - ezt az UpdateVisuals meg kellene valÃ³sÃ­tania
+            // SzinkronizÃ¡ljuk, hogy a szarvas sebezhet
+            if (healthComponent != null)
+            {
+                healthComponent.SetPanicModeActiveRpc(true);
+            }
+            
+            // [NEW] BlendTree vÃ¡ltÃ¡s: NormalDeer â†’ EvilDeer
+            SetDeerEvilModeServerRpc(true);
+            
+            Debug.Log("[Player] Szarvas Ã¡tvÃ¡ltozik Panic Module-ban - SebzÃ©s kÃ©pessÃ©ge aktivÃ¡lva!");
+        }
 
         Debug.Log("[Player] Panic Mode Activated - Combat Disabled & States Reset");
     }
@@ -752,7 +855,6 @@ public class PlayerNetworkController : NetworkBehaviour
         {
             currentTrapPresses = 0;
         }
-        else { }
     }
     [ClientRpc]
     public void ResetPlayerStateClientRpc()
@@ -775,19 +877,26 @@ public class PlayerNetworkController : NetworkBehaviour
         if (characterController != null) characterController.enabled = true;
 
         gravity = -9.81f;
+        
+        // [FIX] Animator csak akkor, ha lÃ©tezik
         if (animator != null)
         {
             animator.Rebind();
             animator.Update(0f);
+            
+            // Unity ignorÃ¡lja a nem lÃ©tezÅ‘ paramÃ©tereket
             animator.SetBool(animIDIsEating, false);
             animator.SetBool(animIDAiming, false);
             animator.SetBool(animIDReload, false);
             animator.SetFloat(animIDSpeed, 0f);
+            animator.SetBool(animIDIsEvilDeer, false);
         }
+        
         if (IsServer)
         {
             isMimicEating.Value = false;
             isAimingNetworked.Value = false;
+            isDeerEvilMode.Value = false; // [NEW] Vissza Normal mÃ³dra
         }
 
         UpdateVisuals(isHunter.Value);
@@ -800,8 +909,20 @@ public class PlayerNetworkController : NetworkBehaviour
     [ClientRpc]
     private void TriggerShootAnimClientRpc()
     {
-        // Mindenki lejátssza a lövés animációt
+        // Mindenki lejï¿½tssza a lï¿½vï¿½s animï¿½ciï¿½t
         if (animator != null && isHunter.Value) animator.SetTrigger(animIDShoot);
+    }
+    [ClientRpc]
+    private void TriggerDashAnimClientRpc()
+    {
+        // Mindenki lejï¿½tssza a Dash animï¿½ciï¿½t (csak szarvasoknak)
+        if (animator != null && !isHunter.Value) animator.SetTrigger(animIDDash);
+    }
+    [ClientRpc]
+    private void TriggerDeerAttackAnimClientRpc()
+    {
+        // Mindenki lejï¿½tssza a szarvas tï¿½madï¿½s animï¿½ciï¿½t
+        if (animator != null && !isHunter.Value) animator.SetTrigger(animIDDeerAttack);
     }
     [ClientRpc]
     private void SetReloadAnimClientRpc(bool reloading)
