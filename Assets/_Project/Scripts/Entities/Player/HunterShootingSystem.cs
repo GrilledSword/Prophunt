@@ -19,17 +19,14 @@ public class HunterShootingSystem : NetworkBehaviour
     {
         playerController = GetComponent<PlayerNetworkController>();
     }
-
     public void EnableShooting(bool enable)
     {
         isShootingEnabled = enable;
     }
-
     public void ResetShootingState()
     {
         isShootingEnabled = true;
     }
-
     public void TryShoot()
     {
         if (!IsOwner) return;
@@ -45,10 +42,8 @@ public class HunterShootingSystem : NetworkBehaviour
 
         Vector3 aimDir = GetAimDirection();
 
-        // Átadjuk a saját ID-nkat is (OwnerClientId)
         SpawnArrowServerRpc(firePoint.position, aimDir, NetworkObjectId);
     }
-
     private Vector3 GetAimDirection()
     {
         Camera cam = Camera.main;
@@ -65,27 +60,20 @@ public class HunterShootingSystem : NetworkBehaviour
             return (ray.GetPoint(100f) - firePoint.position).normalized;
         }
     }
-
-    // [MODIFIED] Új paraméter: shooterId
     [ServerRpc]
     private void SpawnArrowServerRpc(Vector3 spawnPos, Vector3 direction, ulong shooterObjectId)
     {
         GameObject arrowInstance = Instantiate(arrowPrefab, spawnPos, Quaternion.LookRotation(direction));
-
         var netObj = arrowInstance.GetComponent<NetworkObject>();
         netObj.Spawn();
 
         var arrowScript = arrowInstance.GetComponent<ArrowProjectile>();
         if (arrowScript != null)
         {
-            // Átadjuk az Object ID-t
             arrowScript.Initialize(shooterObjectId);
-        }
 
-        Rigidbody arrowRb = arrowInstance.GetComponent<Rigidbody>();
-        if (arrowRb != null)
-        {
-            arrowRb.linearVelocity = direction * shootForce;
+            // [JAVÍTÁS] Itt indítjuk a szinkronizált kilövést!
+            arrowScript.Launch(direction * shootForce);
         }
     }
 }

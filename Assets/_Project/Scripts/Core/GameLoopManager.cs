@@ -8,7 +8,6 @@ public class GameLoopManager : NetworkBehaviour
 {
     public static GameLoopManager Instance { get; private set; }
 
-    // [ÚJ] Loading Állapotok
     public enum LoadingState { WaitingForConnection, LoadingScene, InitializingMap, Ready }
     private LoadingState currentLoadingState = LoadingState.WaitingForConnection;
 
@@ -19,86 +18,134 @@ public class GameLoopManager : NetworkBehaviour
 
     [Header("UI")]
     [SerializeField] private GameObject lobbyUI;
-    [SerializeField] private GameObject loadingScreenPanel; // [ÚJ] Loading Screen
+    [SerializeField] private GameObject loadingScreenPanel;
 
     private NetworkVariable<float> currentTimer = new NetworkVariable<float>(0f);
     private bool isLobbyTimerRunning = false;
     private bool isReleaseTimerRunning = false;
     private bool isMatchStarted = false;
 
-    // Restart flag
     private bool isSceneReloaded = false;
+    private bool areClientsLoaded = false;
 
     private void Awake()
     {
         if (Instance != null && Instance != this) Destroy(gameObject);
         Instance = this;
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.SceneManager != null)
+        {
+            NetworkManager.Singleton.SceneManager.OnLoadEventCompleted += OnSceneLoaded;
+        }
+    }
+    public override void OnDestroy()
+    {
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.SceneManager != null)
+        {
+            NetworkManager.Singleton.SceneManager.OnLoadEventCompleted -= OnSceneLoaded;
+        }
+        base.OnDestroy();
     }
     public override void OnNetworkSpawn()
     {
+        // --- KLIENT OLDALI JAVÍTÁS ---
+        // Ha nem vagyunk szerver (tehát kliensek vagyunk), és épp most spawnoltunk le:
+        if (!IsServer)
+        {
+            // Azonnal ellenõrizzük, hogy el kell-e tüntetni a Loading Screent.
+            // Ha a NetworkGameManager már létezik (márpedig szinkronizálva van), és nem "Lobby"-ban vagyunk, vagy már készen van a pálya...
+            // Egyszerûbb logika: Ha ez a szkript fut a kliensen, az azt jelenti, hogy a Scene betöltött.
+            // Várunk egy kicsit a biztonság kedvéért, vagy elrejtjük, ha a játékállapot engedi.
+            CheckClientLoadingScreen();
+        }
+
         if (IsServer)
         {
-            // Beállítások átvétele
+            areClientsLoaded = false;
+            if (NetworkManager.Singleton.ConnectedClientsList.Count == 1)
+            {
+                Debug.Log("[GameLoop] Solo Host detected, skipping wait.");
+                areClientsLoaded = true;
+            }
+
             if (GameSessionSettings.Instance != null)
             {
                 minPlayersToStart = GameSessionSettings.Instance.MinPlayersToStart;
             }
 
-            NetworkManager.Singleton.SceneManager.OnLoadEventCompleted += OnSceneLoaded;
-
-            // Start Loading Sequence
             currentLoadingState = LoadingState.LoadingScene;
         }
 
         currentTimer.OnValueChanged += OnTimerChanged;
 
-        // Klienseknél is bekapcsoljuk a Loading Screen-t amíg nem kapnak más utasítást
+        // Klienseknél figyeljük a Timer változást is, az jó jelzõ arra, hogy él a kapcsolat
         if (loadingScreenPanel != null) loadingScreenPanel.SetActive(true);
+    }
+    private void CheckClientLoadingScreen()
+    {
+        // Ha már csatlakoztunk és megkaptuk a játékállapotot, és az nem 'Inaktív', akkor levehetjük a töltõképernyõt.
+        // Még jobb: Ha a NetworkGameManager szerint a játékállapot Lobby, InGame, vagy bármi 'élõ', akkor mehet.
+        if (NetworkGameManager.Instance != null)
+        {
+            // Ha már bejutottunk a Lobbyba vagy a Játékba, tüntesd el!
+            HideLoadingScreenClientRpc();
+        }
+        else
+        {
+            // Ha még nincs NetworkGameManager (ritka), próbálkozzunk késõbb
+            StartCoroutine(WaitForGameState());
+        }
+    }
+    private IEnumerator WaitForGameState()
+    {
+        yield return new WaitForSeconds(0.5f);
+        if (loadingScreenPanel != null) loadingScreenPanel.SetActive(false);
     }
     private void OnSceneLoaded(string sceneName, UnityEngine.SceneManagement.LoadSceneMode loadSceneMode, List<ulong> clientsCompleted, List<ulong> clientsTimedOut)
     {
-        if (!IsServer) return;
-
-        // Ez a callback minden kliens betöltésekor lefut, de nekünk elég ha tudjuk, hogy a folyamat zajlik.
-        // A valódi inicializálást az Update-ben a State Machine végzi.
+        if (NetworkManager.Singleton != null && !NetworkManager.Singleton.IsServer) return;
+        areClientsLoaded = true;
         isSceneReloaded = true;
     }
     private void Update()
     {
+        // [ÚJ] Kliens oldali "Fail-safe": Ha véletlenül fent maradt a loading screen, de már megy a játék.
+        if (!IsServer && loadingScreenPanel != null && loadingScreenPanel.activeSelf)
+        {
+            // Ha már látjuk a Lobby UI-t, akkor a Loading Screen biztos nem kell.
+            if (lobbyUI != null && lobbyUI.activeSelf)
+            {
+                loadingScreenPanel.SetActive(false);
+            }
+        }
+
         if (!IsServer) return;
 
-        // --- LOADING STATE MACHINE ---
+        // --- SERVER LOADING STATE MACHINE ---
         switch (currentLoadingState)
         {
             case LoadingState.WaitingForConnection:
-                // Várunk, amíg a NetworkManager elindul (ez már OnNetworkSpawn-nál megtörtént)
                 break;
 
             case LoadingState.LoadingScene:
-                // Várunk, amíg a MapSettings elérhetõ lesz (betöltött a scene)
-                if (MapSettings.Instance != null)
+                if (MapSettings.Instance != null && areClientsLoaded)
                 {
                     currentLoadingState = LoadingState.InitializingMap;
                 }
                 break;
 
             case LoadingState.InitializingMap:
-                // Most már biztosan megvan minden pont, teleportálhatunk
                 TeleportAllToLobby();
 
-                // Reseteljük a játékállapotot
                 if (NetworkGameManager.Instance != null)
                     NetworkGameManager.Instance.currentGameState.Value = NetworkGameManager.GameState.Lobby;
 
-                // UI Reset mindenkinél
                 ResetUIClientRpc();
-                HideLoadingScreenClientRpc(); // [FONTOS] Itt tûnik el a loading screen!
+                HideLoadingScreenClientRpc();
 
                 currentLoadingState = LoadingState.Ready;
                 break;
 
             case LoadingState.Ready:
-                // Mehet a normál játékmenet (Timer, stb.)
                 HandleGameLoop();
                 break;
         }
@@ -115,7 +162,6 @@ public class GameLoopManager : NetworkBehaviour
                 NetworkGameManager.Instance.currentGameState.Value = NetworkGameManager.GameState.Lobby;
         }
 
-        // Lobby Timer
         if (!isMatchStarted)
         {
             int playerCount = NetworkManager.Singleton.ConnectedClientsList.Count;
@@ -131,7 +177,6 @@ public class GameLoopManager : NetworkBehaviour
                 if (currentTimer.Value <= 0f) StartMatchSequence();
             }
         }
-        // Release Timer
         else if (isReleaseTimerRunning)
         {
             currentTimer.Value -= Time.deltaTime;
@@ -146,7 +191,6 @@ public class GameLoopManager : NetworkBehaviour
     private void TeleportAllToLobby()
     {
         if (MapSettings.Instance == null || MapSettings.Instance.LobbySpawnPoint == null) return;
-
         foreach (var client in NetworkManager.Singleton.ConnectedClientsList)
         {
             TeleportPlayer(client.ClientId, MapSettings.Instance.LobbySpawnPoint.position);
@@ -166,7 +210,6 @@ public class GameLoopManager : NetworkBehaviour
     }
     private void DistributePlayersToSpawnPoints()
     {
-        // Ha valamiért nincs MapSettings (lehetetlen, de biztos ami biztos)
         if (MapSettings.Instance == null) return;
 
         foreach (var client in NetworkManager.Singleton.ConnectedClientsList)
@@ -190,19 +233,16 @@ public class GameLoopManager : NetworkBehaviour
                     targetPos = MapSettings.Instance.DeerSpawnPoint.position + randomOffset;
                 }
             }
-
             TeleportPlayer(client.ClientId, targetPos);
         }
     }
     private void TeleportPlayer(ulong clientId, Vector3 position)
     {
-        if (NetworkManager.Singleton.ConnectedClients.TryGetValue(clientId, out var client))
+        ClientRpcParams clientRpcParams = new ClientRpcParams
         {
-            var characterController = client.PlayerObject.GetComponent<CharacterController>();
-            if (characterController != null) characterController.enabled = false;
-            client.PlayerObject.transform.position = position;
-            if (characterController != null) characterController.enabled = true;
-        }
+            Send = new ClientRpcSendParams { TargetClientIds = new ulong[] { clientId } }
+        };
+        ForceTeleportClientRpc(position, clientRpcParams);
     }
     private void OnTimerChanged(float oldVal, float newVal)
     {
@@ -244,5 +284,17 @@ public class GameLoopManager : NetworkBehaviour
     private void HideLoadingScreenClientRpc()
     {
         if (loadingScreenPanel != null) loadingScreenPanel.SetActive(false);
+    }
+    [ClientRpc]
+    private void ForceTeleportClientRpc(Vector3 position, ClientRpcParams clientRpcParams = default)
+    {
+        var localPlayer = NetworkManager.Singleton.SpawnManager.GetLocalPlayerObject();
+        if (localPlayer != null)
+        {
+            var characterController = localPlayer.GetComponent<CharacterController>();
+            if (characterController != null) characterController.enabled = false;
+            localPlayer.transform.position = position;
+            if (characterController != null) characterController.enabled = true;
+        }
     }
 }

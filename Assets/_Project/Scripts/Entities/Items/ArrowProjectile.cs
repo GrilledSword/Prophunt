@@ -23,17 +23,17 @@ public class ArrowProjectile : NetworkBehaviour
     public override void OnNetworkSpawn()
     {
         rb = GetComponent<Rigidbody>();
-        // FONTOS: Gyors mozgásnál kötelező a ContinuousDynamic
         rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+
+        // Ha nem a szerver vagyunk, tegyük a Rigidbody-t kinematikussá, AMÍG meg nem kapjuk az impulzust.
+        // Vagy hagyjuk szabadon, de a ClientRpc majd helyreteszi.
 
         if (IsServer) Destroy(gameObject, lifeTime);
     }
-
     public void Initialize(ulong shooterObjId)
     {
         shooterObjectId = shooterObjId;
     }
-
     private void FixedUpdate()
     {
         // Forgatás a repülés irányába
@@ -42,7 +42,6 @@ public class ArrowProjectile : NetworkBehaviour
             transform.rotation = Quaternion.LookRotation(rb.linearVelocity);
         }
     }
-
     private void OnTriggerEnter(Collider other)
     {
         if (!IsServer || hasHit) return;
@@ -111,8 +110,14 @@ public class ArrowProjectile : NetworkBehaviour
             StopArrow();
         }
     }
+    public void Launch(Vector3 velocity)
+    {
+        // Szerveren alkalmazzuk
+        if (rb != null) rb.linearVelocity = velocity;
 
-    // [ADDED] Segédfüggvény a lövő életének módosítására
+        // Minden kliensnek elküldjük az erőt
+        ApplyVelocityClientRpc(velocity);
+    }
     private void ModifyShooterHealth(float amount)
     {
         // Megkeressük a lövő objektumot az ID alapján a SpawnManager-ben
@@ -130,46 +135,48 @@ public class ArrowProjectile : NetworkBehaviour
             Debug.LogWarning("[Arrow] Nem található a lövő játékos a szerveren (lehet, hogy kilépett).");
         }
     }
-
     private void StopArrow()
     {
-        // Unity 6 kompatibilis megállítás
-        if (rb != null && !rb.isKinematic)
+        FreezePhysics();
+        Invoke(nameof(DespawnArrow), destroyTimeAfterHit);
+        SetKinematicClientRpc();
+    }
+    private void FreezePhysics()
+    {
+        if (rb != null)
         {
             rb.linearVelocity = Vector3.zero;
             rb.angularVelocity = Vector3.zero;
             rb.collisionDetectionMode = CollisionDetectionMode.Discrete;
             rb.isKinematic = true;
         }
-
-        var colliders = GetComponentsInChildren<Collider>();
-        foreach (var c in colliders) c.enabled = false;
-
-        if (trailRenderer) trailRenderer.enabled = false;
-
-        Invoke(nameof(DespawnArrow), destroyTimeAfterHit);
-        SetKinematicClientRpc();
-    }
-
-    [ClientRpc]
-    private void SetKinematicClientRpc()
-    {
-        if (TryGetComponent(out Rigidbody r))
-        {
-            r.linearVelocity = Vector3.zero;
-            r.collisionDetectionMode = CollisionDetectionMode.Discrete;
-            r.isKinematic = true;
-        }
         var colliders = GetComponentsInChildren<Collider>();
         foreach (var c in colliders) c.enabled = false;
         if (trailRenderer) trailRenderer.enabled = false;
     }
-
     private void DespawnArrow()
     {
         if (IsServer && GetComponent<NetworkObject>().IsSpawned)
         {
             GetComponent<NetworkObject>().Despawn();
+        }
+    }
+    [ClientRpc]
+    private void SetKinematicClientRpc()
+    {
+        if (!IsServer) FreezePhysics();
+    }
+    [ClientRpc]
+    private void ApplyVelocityClientRpc(Vector3 velocity)
+    {
+        // Ha mi vagyunk a szerver (Host), akkor már megkaptuk, ne duplázzuk
+        if (IsServer) return;
+
+        if (TryGetComponent(out Rigidbody r))
+        {
+            r.isKinematic = false;
+            r.linearVelocity = velocity;
+            // Unity 6: linearVelocity, Régi Unity: velocity
         }
     }
 }
