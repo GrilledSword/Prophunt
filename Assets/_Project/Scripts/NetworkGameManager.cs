@@ -27,6 +27,24 @@ public class NetworkGameManager : NetworkBehaviour
     private Dictionary<ulong, PlayerNetworkController> connectedPlayers = new Dictionary<ulong, PlayerNetworkController>();
     private List<SafeZone> allSafeZones = new List<SafeZone>();
 
+    public RoundType GetWeightedRoundType()
+    {
+        int totalWeight = chanceNormal + chanceMines + chanceTraps;
+        int randomVal = Random.Range(0, totalWeight);
+
+        if (randomVal < chanceNormal)
+        {
+            return RoundType.Normal;
+        }
+        else if (randomVal < chanceNormal + chanceMines)
+        {
+            return RoundType.Mines;
+        }
+        else
+        {
+            return RoundType.Traps;
+        }
+    }
     private void Awake()
     {
         if (Instance != null && Instance != this) Destroy(gameObject);
@@ -45,24 +63,9 @@ public class NetworkGameManager : NetworkBehaviour
         SetGlobalDrain(false);
         areTrapsActive.Value = false;
 
-        int totalWeight = chanceNormal + chanceMines + chanceTraps;
-        int randomVal = Random.Range(0, totalWeight);
-
-        if (randomVal < chanceNormal)
-        {
-            currentRoundType.Value = RoundType.Normal;
-            Debug.Log("[NetworkGameManager] Selected RoundType: Normal");
-        }
-        else if (randomVal < chanceNormal + chanceMines)
-        {
-            currentRoundType.Value = RoundType.Mines;
-            Debug.Log("[NetworkGameManager] Selected RoundType: Mines");
-        }
-        else
-        {
-            currentRoundType.Value = RoundType.Traps;
-            Debug.Log("[NetworkGameManager] Selected RoundType: Traps");
-        }
+        // [TÖRÖLT] A sorsolás innen kikerült, mert felülírta a GameLoopManager döntését!
+        // A GameLoopManager már beállította a currentRoundType-ot a GenerateLevel előtt.
+        Debug.Log($"[NetworkGameManager] StartGame RPC called. Current RoundType is already set to: {currentRoundType.Value}");
 
         // [REMOVED] GenerateLevel hívás - ezt a GameLoopManager kezeli!
 
@@ -173,7 +176,7 @@ public class NetworkGameManager : NetworkBehaviour
     private IEnumerator RestartGameRoutine()
     {
         yield return new WaitForSeconds(5f);
-        NetworkManager.Singleton.SceneManager.LoadScene("GameScene", UnityEngine.SceneManagement.LoadSceneMode.Single);
+        LoadNextMap();
     }
 
     public override void OnNetworkSpawn()

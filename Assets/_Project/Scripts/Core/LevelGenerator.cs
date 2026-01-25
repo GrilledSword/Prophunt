@@ -6,42 +6,48 @@ public class LevelGenerator : NetworkBehaviour
 {
     public static LevelGenerator Instance { get; private set; }
 
-    [Header("Spawn Ter�let")]
+    [Header("Spawn Terület")]
     [SerializeField] private BoxCollider spawnArea;
     [SerializeField] private LayerMask groundLayer;
 
-    [Header("Kaja Be�ll�t�sok")]
+    [Header("Kaja Beállítások")]
     [SerializeField] private GameObject foodPrefab;
     [SerializeField] private int foodCount = 10;
 
-    [Header("Vesz�ly Be�ll�t�sok")]
+    [Header("Veszély Beállítások")]
     [SerializeField] private GameObject landminePrefab;
     [SerializeField] private int landmineCount = 5;
 
     [SerializeField] private GameObject bearTrapPrefab;
     [SerializeField] private int bearTrapCount = 5;
 
-    [Header("NPC Be�ll�t�sok")]
+    [Header("NPC Beállítások")]
     [SerializeField] private GameObject deerNpcPrefab;
     [SerializeField] private int npcCount = 25;
 
     private List<NetworkObject> spawnedObjects = new List<NetworkObject>();
-    private NetworkGameManager.RoundType currentRoundType = NetworkGameManager.RoundType.Normal;
 
     private void Awake()
     {
         if (Instance != null && Instance != this) Destroy(gameObject);
         Instance = this;
     }
-
+    public override void OnNetworkSpawn()
+    {
+        // [ÚJ] Amint a szerveren létrejön ez a szkript (pálya betöltéskor),
+        // azonnal takarítunk, hogy ne maradjon szemét az előző körből.
+        if (IsServer)
+        {
+            Debug.Log("[LevelGenerator] Scene loaded. Cleaning up potential leftovers...");
+            ClearPreviousRoundObjects();
+        }
+    }
     public void GenerateLevel(NetworkGameManager.RoundType roundType)
     {
         if (!IsServer) return;
 
-        // [FIX] Mindig clear az előző szintet, majd spawn az újakkal
+        // Biztonsági takarítás generálás előtt is
         ClearPreviousRoundObjects();
-
-        currentRoundType = roundType;
 
         Debug.Log($"[LevelGenerator] 🧹 Clearing old level before generating RoundType: {roundType}");
 
@@ -67,93 +73,66 @@ public class LevelGenerator : NetworkBehaviour
 
         Debug.Log($"[LevelGenerator] ✅ Level generated with RoundType: {roundType}");
     }
-
     private void ClearPreviousRoundObjects()
     {
         int despawnedCount = 0;
 
-        // 1. Összes tracked objektum despawnolása
+        // 1. Ismert objektumok törlése (ha van a listában)
+        // Újratöltésnél ez a lista üres, de meccs közbeni újragenerálásnál hasznos.
         foreach (var obj in spawnedObjects)
         {
-            if (obj != null)
+            if (obj != null && obj.IsSpawned)
             {
                 try
                 {
-                    if (obj.IsSpawned)
-                    {
-                        obj.Despawn(false);
-                        despawnedCount++;
-                        Debug.Log($"[LevelGenerator] Despawned: {obj.gameObject.name}");
-                    }
+                    obj.Despawn(false);
+                    despawnedCount++;
                 }
                 catch (System.Exception ex)
                 {
-                    Debug.LogError($"[LevelGenerator] Error despawning {obj.gameObject.name}: {ex.Message}");
+                    Debug.LogWarning($"[LevelGenerator] Error despawning known object: {ex.Message}");
                 }
             }
         }
         spawnedObjects.Clear();
 
-        // 2. Biztonsági takarítás: Keressen meg minden runtime-spawned objektumot
-        // Keresünk: Food, Landmine, BearTrap, DeerNPC komponenseket
-        var allFood = FindObjectsByType<FoodItem>(FindObjectsSortMode.None);
-        foreach (var food in allFood)
+        // 2. [JAVÍTOTT] Biztonsági takarítás: Keressen meg MINDEN runtime-spawned objektumot.
+        // Most már az INAKTÍV objektumokat is keressük (FindObjectsInactive.Include)!
+        
+        void DespawnList<T>() where T : Component
         {
-            if (food == null) continue;
-            var netObj = food.GetComponent<NetworkObject>();
-            if (netObj != null && netObj.IsSpawned)
+            var foundObjects = FindObjectsByType<T>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            foreach (var item in foundObjects)
             {
-                netObj.Despawn(false);
-                despawnedCount++;
-                Debug.Log($"[LevelGenerator] Extra despawned: {food.gameObject.name}");
+                if (item == null) continue;
+                
+                // Csak akkor töröljük, ha van rajta NetworkObject
+                var netObj = item.GetComponent<NetworkObject>();
+                if (netObj != null && netObj.IsSpawned)
+                {
+                    netObj.Despawn(false);
+                    despawnedCount++;
+                    Debug.Log($"[LevelGenerator] Ghost despawned: {item.gameObject.name}");
+                }
+                else if (netObj == null) 
+                {
+                    // Ha nincs NetworkObject, de ott van (pl. kliens oldali szellem), simán Destroy
+                    Destroy(item.gameObject);
+                }
             }
         }
 
-        var allMines = FindObjectsByType<Landmine>(FindObjectsSortMode.None);
-        foreach (var mine in allMines)
-        {
-            if (mine == null) continue;
-            var netObj = mine.GetComponent<NetworkObject>();
-            if (netObj != null && netObj.IsSpawned)
-            {
-                netObj.Despawn(false);
-                despawnedCount++;
-                Debug.Log($"[LevelGenerator] Extra despawned: {mine.gameObject.name}");
-            }
-        }
+        DespawnList<FoodItem>();
+        DespawnList<Landmine>();
+        DespawnList<BearTrap>();
+        DespawnList<DeerAIController>();
 
-        var allTraps = FindObjectsByType<BearTrap>(FindObjectsSortMode.None);
-        foreach (var trap in allTraps)
-        {
-            if (trap == null) continue;
-            var netObj = trap.GetComponent<NetworkObject>();
-            if (netObj != null && netObj.IsSpawned)
-            {
-                netObj.Despawn(false);
-                despawnedCount++;
-                Debug.Log($"[LevelGenerator] Extra despawned: {trap.gameObject.name}");
-            }
-        }
-
-        // Szarvasok (csak NPC-k, nem Player!)
-        var allDeerNpc = FindObjectsByType<DeerAIController>(FindObjectsSortMode.None);
-        foreach (var deer in allDeerNpc)
-        {
-            if (deer == null) continue;
-            var netObj = deer.GetComponent<NetworkObject>();
-            if (netObj != null && netObj.IsSpawned)
-            {
-                netObj.Despawn(false);
-                despawnedCount++;
-                Debug.Log($"[LevelGenerator] Extra despawned: {deer.gameObject.name}");
-            }
-        }
-
-        Debug.Log($"[LevelGenerator] ✅ Összes objektum megtisztítva! Despawned: {despawnedCount} darab");
+        Debug.Log($"[LevelGenerator] ✅ Clean sweep complete! Total removed: {despawnedCount}");
     }
-
     private void SpawnObjects(GameObject prefab, int count)
     {
+        if (prefab == null) return;
+
         for (int i = 0; i < count; i++)
         {
             Vector3 randomPos = GetRandomPosition();
@@ -169,7 +148,6 @@ public class LevelGenerator : NetworkBehaviour
             }
         }
     }
-
     private Vector3 GetRandomPosition()
     {
         if (spawnArea == null) return Vector3.zero;

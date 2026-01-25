@@ -47,14 +47,9 @@ public class GameLoopManager : NetworkBehaviour
     }
     public override void OnNetworkSpawn()
     {
-        // --- KLIENT OLDALI JAV�T�S ---
-        // Ha nem vagyunk szerver (teh�t kliensek vagyunk), �s �pp most spawnoltunk le:
+        // --- KLIENT OLDALI JAVÍTÁS ---
         if (!IsServer)
         {
-            // Azonnal ellen�rizz�k, hogy el kell-e t�ntetni a Loading Screent.
-            // Ha a NetworkGameManager m�r l�tezik (m�rpedig szinkroniz�lva van), �s nem "Lobby"-ban vagyunk, vagy m�r k�szen van a p�lya...
-            // Egyszer�bb logika: Ha ez a szkript fut a kliensen, az azt jelenti, hogy a Scene bet�lt�tt.
-            // V�runk egy kicsit a biztons�g kedv��rt, vagy elrejtj�k, ha a j�t�k�llapot engedi.
             CheckClientLoadingScreen();
         }
 
@@ -76,8 +71,6 @@ public class GameLoopManager : NetworkBehaviour
         }
 
         currentTimer.OnValueChanged += OnTimerChanged;
-
-        // Kliensekn�l figyelj�k a Timer v�ltoz�st is, az j� jelz� arra, hogy �l a kapcsolat
         if (loadingScreenPanel != null) loadingScreenPanel.SetActive(true);
     }
     private void CheckClientLoadingScreen()
@@ -108,10 +101,8 @@ public class GameLoopManager : NetworkBehaviour
     }
     private void Update()
     {
-        // [�J] Kliens oldali "Fail-safe": Ha v�letlen�l fent maradt a loading screen, de m�r megy a j�t�k.
         if (!IsServer && loadingScreenPanel != null && loadingScreenPanel.activeSelf)
         {
-            // Ha m�r l�tjuk a Lobby UI-t, akkor a Loading Screen biztos nem kell.
             if (lobbyUI != null && lobbyUI.activeSelf)
             {
                 loadingScreenPanel.SetActive(false);
@@ -120,7 +111,6 @@ public class GameLoopManager : NetworkBehaviour
 
         if (!IsServer) return;
 
-        // --- SERVER LOADING STATE MACHINE ---
         switch (currentLoadingState)
         {
             case LoadingState.WaitingForConnection:
@@ -221,24 +211,30 @@ public class GameLoopManager : NetworkBehaviour
         isLobbyTimerRunning = false;
         isMatchStarted = true;
 
-        // [FIX] Először kiválasztjuk a RoundType-ot
-        var roundTypes = System.Enum.GetValues(typeof(NetworkGameManager.RoundType));
-        NetworkGameManager.RoundType randomType = (NetworkGameManager.RoundType)roundTypes.GetValue(Random.Range(0, roundTypes.Length));
+        // [JAVÍTVA] Most már a NetworkGameManager-től kérjük el a SÚLYOZOTT típust!
+        // Így nem 33-33-33% lesz az esély, hanem amit beállítottál (70-15-15)
+        NetworkGameManager.RoundType selectedType = NetworkGameManager.RoundType.Normal;
         
-        // Szinkronizálás a NetworkGameManager-rel
         if (NetworkGameManager.Instance != null)
         {
-            NetworkGameManager.Instance.currentRoundType.Value = randomType;
+            selectedType = NetworkGameManager.Instance.GetWeightedRoundType();
+            
+            // Beállítjuk a NetworkVariable-t, hogy mindenki lássa mi a pálya
+            NetworkGameManager.Instance.currentRoundType.Value = selectedType;
+            Debug.Log($"[GameLoopManager] RoundType decided via Weighted RNG: {selectedType}");
         }
 
-        // UTÁNA generálás (ClearLevel belül automatikusan megtörténik)
+        // UTÁNA generálás a már KIVÁLASZTOTT típussal
         if (LevelGenerator.Instance != null)
         {
-            LevelGenerator.Instance.GenerateLevel(randomType);
+            LevelGenerator.Instance.GenerateLevel(selectedType);
         }
 
-        // Szerveroldali játékállapot bejelentése
-        NetworkGameManager.Instance.StartGameServerRpc();
+        // Szerveroldali játékállapot bejelentése (ez most már NEM fogja felülírni a típust)
+        if (NetworkGameManager.Instance != null)
+        {
+            NetworkGameManager.Instance.StartGameServerRpc();
+        }
 
         DistributePlayersToSpawnPoints();
         ToggleLobbyUIClientRpc(false);
